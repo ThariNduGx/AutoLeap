@@ -1,0 +1,34 @@
+{
+  "extends": [
+    "next/core-web-vitals",
+    "plugin:import/recommended",
+    "plugin:import/typescript"
+  ],
+  "rules": {
+    "no-restricted-imports": [
+      "error",
+      {
+        "paths": [
+          {
+            "name": "openai",
+            "message": "CRITICAL: Direct import of 'openai' is FORBIDDEN. It incurs costs. Use 'lib/infrastructure/llm-adapter.ts' only."
+          },
+          {
+            "name": "ai",
+            "message": "CRITICAL: Vercel AI SDK imports must be centralized in infrastructure adapter to control model selection."
+          },
+          {
+            "name": "@google/generative-ai",
+            "message": "CRITICAL: AI Model imports are restricted to the infrastructure adapter."
+          }
+        ],
+        "patterns": [
+          {
+            "group": ["langchain/*"],
+            "message": "Do not use LangChain directly in UI components. Use the centralized adapter."
+          }
+        ]
+      }
+    ]
+  }
+}
