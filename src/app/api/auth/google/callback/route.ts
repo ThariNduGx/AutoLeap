@@ -20,7 +20,7 @@ export async function GET(request: NextRequest) {
   try {
     // Exchange code for tokens
     const { tokens } = await oauth2Client.getToken(code);
-    
+
     // Extract business_id from state
     const businessId = state || process.env.DEFAULT_BUSINESS_ID;
 
@@ -30,12 +30,12 @@ export async function GET(request: NextRequest) {
 
     // Store tokens in database - BYPASS TypeScript checking completely
     const supabase = getSupabaseClient();
-    
-    const updateQuery: any = supabase
-      .from('businesses')
+
+    // Cast to any to bypass strict type checking for update
+    const updateQuery = (supabase.from('businesses') as any)
       .update({ google_calendar_token: JSON.stringify(tokens) })
       .eq('id', businessId);
-    
+
     const { error } = await updateQuery;
 
     if (error) {
