@@ -44,6 +44,9 @@ const INTENT_RULES: IntentPattern[] = [
       /\b(how much|price|cost|rate|pricing|charge|fee)\b/i,
       /\b(what|how|when|where|which|why)\b/i,
       /\b(service|offer|provide|available|coverage|area)\b/i,
+      /\b(do you|can i|is it|are you)\b/i,
+      /\b(credit|card|payment|pay|cash|visa|mastercard)\b/i,
+      /\b(open|close|hours|time|working)\b/i,
     ],
     priority: 5,
   },
@@ -80,14 +83,14 @@ export function selectModel(intent: IntentType): 'gpt-4o-mini' | 'gpt-4o' {
     case 'greeting':
     case 'status':
       return 'gpt-4o-mini'; // Simple responses, cheap model
-    
+
     case 'faq':
       return 'gpt-4o-mini'; // RAG-assisted, cheap model sufficient
-    
+
     case 'booking':
     case 'complaint':
       return 'gpt-4o'; // Complex tool-calling, needs powerful model
-    
+
     case 'unknown':
     default:
       return 'gpt-4o-mini'; // Start cheap, escalate if needed

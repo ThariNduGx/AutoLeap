@@ -13,7 +13,7 @@ export async function generateEmbedding(
     console.log('[EMBEDDINGS] Generating for text:', text.substring(0, 50));
 
     // Use Gemini embedding model if in dev mode, otherwise OpenAI
-    const model = process.env.USE_GEMINI_FOR_DEV === 'true' 
+    const model = process.env.USE_GEMINI_FOR_DEV === 'true'
       ? 'text-embedding-004'  // Current stable model (works until Jan 2026)
       : 'text-embedding-3-small';
 
@@ -23,15 +23,15 @@ export async function generateEmbedding(
     });
 
     const embedding = response.data[0].embedding;
-    
+
     // Track cost (will be $0 for Gemini free tier)
     const tokensUsed = response.usage?.total_tokens || 0;
     const cost = calculateActualCost(model as any, tokensUsed, 0);
-    
+
     await commitCost(businessId, cost, model as any, tokensUsed, 0);
-    
+
     console.log('[EMBEDDINGS] ✅ Generated, cost:', cost.toFixed(6));
-    
+
     return embedding;
   } catch (error) {
     console.error('[EMBEDDINGS] Failed:', error);
@@ -80,7 +80,7 @@ export async function storeFAQ(
     // 3. Store embedding (in the correct column based on provider)
     const isGemini = process.env.USE_GEMINI_FOR_DEV === 'true';
     const embeddingColumn = isGemini ? 'embedding_gemini' : 'embedding';
-    
+
     const { error: embeddingError } = await (supabase
       .from('faq_embeddings') as any)
       .insert({
@@ -107,7 +107,7 @@ export async function storeFAQ(
 export async function searchFAQs(
   businessId: string,
   query: string,
-  matchThreshold: number = 0.7,
+  matchThreshold: number = 0.6,
   matchCount: number = 3
 ): Promise<Array<{ question: string; answer: string; similarity: number }>> {
   const supabase = getSupabaseClient();
@@ -122,7 +122,12 @@ export async function searchFAQs(
     }
 
     // 2. Search using RPC function
-    const { data, error } = await (supabase.rpc as any)('match_faqs', {
+    const isGemini = process.env.USE_GEMINI_FOR_DEV === 'true';
+    const rpcName = isGemini ? 'match_faqs_gemini' : 'match_faqs';
+
+    console.log(`[FAQ] Searching via ${rpcName}...`);
+
+    const { data, error } = await (supabase.rpc as any)(rpcName, {
       query_embedding: queryEmbedding,
       match_threshold: matchThreshold,
       match_count: matchCount,
@@ -135,7 +140,7 @@ export async function searchFAQs(
     }
 
     console.log('[FAQ] ✅ Found', data?.length || 0, 'matches');
-    
+
     return data || [];
   } catch (error) {
     console.error('[FAQ] Search exception:', error);

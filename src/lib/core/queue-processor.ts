@@ -38,11 +38,11 @@ interface Conversation {
  */
 export async function processQueue(batchSize: number = 10): Promise<number> {
   const supabase = getSupabaseClient();
-  
+
   console.log('[QUEUE] Starting batch processing...');
 
-  const { data: items, error: fetchError } = await supabase
-    .from('request_queue')
+  const { data: items, error: fetchError } = await (supabase
+    .from('request_queue') as any)
     .select('*')
     .eq('status', 'pending')
     .order('created_at', { ascending: true })
@@ -67,7 +67,7 @@ export async function processQueue(batchSize: number = 10): Promise<number> {
       processedCount++;
     } catch (err) {
       console.error('[QUEUE] Failed to process item:', item.id, err);
-      
+
       await (supabase.from('request_queue') as any)
         .update({ status: 'failed' })
         .eq('id', item.id);
@@ -125,23 +125,23 @@ async function processItem(item: QueueItem): Promise<void> {
     case 'greeting':
       result = await handleGreeting(message, item.business_id);
       break;
-    
+
     case 'faq':
       result = await handleFAQ(message, item.business_id, model);
       break;
-    
+
     case 'booking':
       result = await handleBooking(message, item.business_id, model);
       break;
-    
+
     case 'status':
       result = await handleStatus(message, item.business_id);
       break;
-    
+
     case 'complaint':
       result = await handleComplaint(message, item.business_id, model);
       break;
-    
+
     default:
       // Check if this is a continuation of a booking conversation
       const conversation = await getActiveConversation(item.business_id, message.chatId);
@@ -168,17 +168,17 @@ async function getActiveConversation(
   customerId: string
 ): Promise<Conversation | null> {
   const supabase = getSupabaseClient();
-  
+
   const { data } = await (supabase
-    .from('conversations')
+    .from('conversations') as any)
     .select('*')
     .eq('business_id', businessId)
     .eq('customer_chat_id', customerId)
     .gt('expires_at', new Date().toISOString())
     .order('created_at', { ascending: false })
     .limit(1)
-    .maybeSingle() as any);
-  
+    .maybeSingle();
+
   return data as Conversation | null;
 }
 /**
@@ -193,10 +193,10 @@ async function getOrCreateConversation(
   intent: string
 ): Promise<Conversation> {
   const supabase = getSupabaseClient();
-  
+
   // Check for active conversation
-  const { data: existing } = await supabase
-    .from('conversations')
+  const { data: existing } = await (supabase
+    .from('conversations') as any)
     .select('*')
     .eq('business_id', businessId)
     .eq('customer_chat_id', customerId)
@@ -204,15 +204,15 @@ async function getOrCreateConversation(
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle();
-  
+
   if (existing) {
     console.log('[CONVERSATION] Continuing:', (existing as any).id);
     return existing as any as Conversation;
   }
-  
+
   // Create new conversation
-  const { data: created, error } = await supabase
-    .from('conversations')
+  const { data: created, error } = await (supabase
+    .from('conversations') as any)
     .insert({
       business_id: businessId,
       customer_chat_id: customerId,
@@ -222,12 +222,12 @@ async function getOrCreateConversation(
     } as any)
     .select()
     .single();
-  
+
   if (error || !created) {
     console.error('[CONVERSATION] Failed to create:', error);
     throw new Error('Failed to create conversation');
   }
-  
+
   console.log('[CONVERSATION] Started new:', (created as any).id);
   return created as any as Conversation;
 }
@@ -244,23 +244,23 @@ async function updateConversation(
   history: any[]
 ): Promise<void> {
   const supabase = getSupabaseClient();
-  
+
   await (supabase
-    .from('conversations')
+    .from('conversations') as any)
     .update({
       state,
       history,
       last_message_at: new Date().toISOString(),
       expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
     })
-    .eq('id', conversationId) as any);
+    .eq('id', conversationId);
 }
 
 
 
 function extractMessage(payload: any): { text: string; userId: string; chatId: string } | null {
   const message = payload.message || payload.edited_message;
-  
+
   if (!message || !message.text) {
     return null;
   }
@@ -289,7 +289,7 @@ async function sendResponseToTelegram(
 ): Promise<void> {
   try {
     const { sendTelegramMessage, sendTypingAction } = await import('../infrastructure/telegram');
-    
+
     const message = payload.message || payload.edited_message;
     if (!message) return;
 
@@ -299,10 +299,10 @@ async function sendResponseToTelegram(
 
     const supabase = getSupabaseClient();
     const { data: business } = await (supabase
-      .from('businesses')
+      .from('businesses') as any)
       .select('telegram_bot_token')
       .eq('id', businessId)
-      .single() as any);
+      .single();
 
     if (!business || !business.telegram_bot_token) {
       console.error('[TELEGRAM] No bot token');
@@ -349,7 +349,7 @@ async function handleFAQ(
   const { llm } = await import('../infrastructure/llm-adapter');
 
   try {
-    const relevantFAQs = await searchFAQs(businessId, message.text, 0.7, 3);
+    const relevantFAQs = await searchFAQs(businessId, message.text, 0.6, 3);
 
     if (relevantFAQs.length === 0) {
       return {
@@ -388,7 +388,7 @@ Instructions:
     const tokensIn = response.usage?.prompt_tokens || 0;
     const tokensOut = response.usage?.completion_tokens || 0;
     const cost = calculateActualCost(model as any, tokensIn, tokensOut);
-    
+
     await commitCost(businessId, cost, model as any, tokensIn, tokensOut);
 
     return {
@@ -418,9 +418,9 @@ async function handleBooking(
     const conversation = await getOrCreateConversation(businessId, message.chatId, 'booking');
 
     const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY!);
-    
+
     const geminiModel = genAI.getGenerativeModel({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-flash-latest',
       tools: calendarToolsForGemini as any,
     });
 
@@ -435,7 +435,7 @@ async function handleBooking(
 
     // Build context-aware prompt
     const isFirstMessage = conversation.history.length === 0;
-    
+
     let currentMessage = '';
     if (isFirstMessage) {
       currentMessage = `You are a booking assistant for a Sri Lankan service business.
@@ -465,7 +465,7 @@ Continue helping them complete the booking. State: ${JSON.stringify(conversation
 
       const result = await chat.sendMessage(currentMessage);
       const response = result.response;
-      
+
       totalTokens += response.usageMetadata?.totalTokenCount || 0;
 
       // Save to history
@@ -484,7 +484,7 @@ Continue helping them complete the booking. State: ${JSON.stringify(conversation
         for (const call of functionCalls) {
           console.log(`[TOOL] Executing: ${call.name}`);
           console.log(`[TOOL] Arguments:`, JSON.stringify(call.args, null, 2));
-          
+
           const toolResult = await executeCalendarTool(
             call.name,
             call.args,
@@ -523,12 +523,12 @@ Continue helping them complete the booking. State: ${JSON.stringify(conversation
         }
 
         const finalText = nextResult.response.text();
-        
+
         // Save conversation
         await updateConversation(conversation.id, conversation.state, conversation.history);
-        
+
         const cost = 0;
-        await commitCost(businessId, cost, 'gemini-2.5-flash', totalTokens, 0);
+        await commitCost(businessId, cost, 'gemini-flash-latest', totalTokens, 0);
 
         return {
           success: true,
@@ -544,7 +544,7 @@ Continue helping them complete the booking. State: ${JSON.stringify(conversation
       await updateConversation(conversation.id, conversation.state, conversation.history);
 
       const cost = 0;
-      await commitCost(businessId, cost, 'gemini-2.5-flash', totalTokens, 0);
+      await commitCost(businessId, cost, 'gemini-flash-latest', totalTokens, 0);
 
       return {
         success: true,
@@ -559,10 +559,10 @@ Continue helping them complete the booking. State: ${JSON.stringify(conversation
       response: 'To complete your booking, please provide all details in one message: service, date, time, your name, and phone (10 digits).',
       costIncurred: 0,
     };
-    
+
   } catch (error: any) {
     console.error('[BOOKING] Handler error:', error);
-    
+
     return {
       success: false,
       error: 'Failed to process booking request. Please try again.',

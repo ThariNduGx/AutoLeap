@@ -36,20 +36,45 @@ async function getOAuth2Client(businessId: string): Promise<OAuth2Client | null>
 /**
  * Get available time slots for a given date
  */
+/**
+ * Get available time slots for a given date
+ * Level 4 Caching: Cache availability for 24 hours to reduce API costs
+ */
 export async function getAvailableSlots(
   businessId: string,
   date: string, // Format: YYYY-MM-DD
   businessHours: { start: string; end: string } = { start: '08:00', end: '18:00' }
 ): Promise<string[]> {
+  const { Redis } = await import('@upstash/redis');
+  // Initialize Redis here to avoid circular imports / missing env vars on init
+  const redis = new Redis({
+    url: process.env.UPSTASH_REDIS_REST_URL!,
+    token: process.env.UPSTASH_REDIS_REST_TOKEN!,
+  });
+
+  const cacheKey = `calendar:availability:${businessId}:${date}`;
+
+  try {
+    // 1. Check Cache
+    const cached = await redis.get<string[]>(cacheKey);
+    if (cached) {
+      console.log('[CALENDAR] ⚡️ Cache hit for', date);
+      return cached;
+    }
+  } catch (err) {
+    console.warn('[CALENDAR] Cache check failed:', err);
+  }
+
   const auth = await getOAuth2Client(businessId);
   if (!auth) return [];
 
   try {
+    // ... API Fetch Logic (same as before) ...
     // Get start and end of day
     const dayStart = new Date(`${date}T${businessHours.start}:00`);
     const dayEnd = new Date(`${date}T${businessHours.end}:00`);
 
-    console.log('[CALENDAR] Checking availability:', date);
+    console.log('[CALENDAR] 🔄 API Call: Checking availability for', date);
 
     // Check busy times via freebusy API
     const response = await calendar.freebusy.query({
@@ -88,6 +113,16 @@ export async function getAvailableSlots(
     });
 
     console.log('[CALENDAR] ✅ Found', availableSlots.length, 'available slots');
+
+    // 2. Set Cache (TTL 24 hours = 86400 seconds)
+    try {
+      if (availableSlots.length > 0) {
+        await redis.set(cacheKey, availableSlots, { ex: 86400 });
+      }
+    } catch (err) {
+      console.warn('[CALENDAR] Cache set failed:', err);
+    }
+
     return availableSlots;
   } catch (error) {
     console.error('[CALENDAR] Error fetching slots:', error);
@@ -145,6 +180,19 @@ export async function createAppointment(
     });
 
     console.log('[CALENDAR] ✅ Appointment created:', event.data.id);
+
+    // Invalidate cache for this date
+    try {
+      const { Redis } = await import('@upstash/redis');
+      const redis = new Redis({
+        url: process.env.UPSTASH_REDIS_REST_URL!,
+        token: process.env.UPSTASH_REDIS_REST_TOKEN!,
+      });
+      await redis.del(`calendar:availability:${businessId}:${details.date}`);
+      console.log('[CALENDAR] 🧹 Cache invalidated for', details.date);
+    } catch (err) {
+      console.warn('[CALENDAR] Failed to invalidate cache:', err);
+    }
 
     return {
       success: true,

@@ -31,8 +31,7 @@ export async function GET(request: NextRequest) {
     // Store tokens in database - BYPASS TypeScript checking completely
     const supabase = getSupabaseClient();
     
-    const updateQuery: any = supabase
-      .from('businesses')
+    const updateQuery: any = (supabase.from('businesses') as any)
       .update({ google_calendar_token: JSON.stringify(tokens) })
       .eq('id', businessId);
     

@@ -25,7 +25,7 @@ const getOpenAIClient = () => {
   if (!apiKey) {
     throw new Error('OPENAI_API_KEY not set');
   }
-  
+
   const useOpenRouter = process.env.USE_OPENROUTER === 'true';
   return new OpenAI({
     apiKey: useOpenRouter ? process.env.OPENROUTER_API_KEY : apiKey,
@@ -45,7 +45,7 @@ const getGeminiClient = () => {
 // Unified interface for both providers
 export const llm = {
   activeProvider: getActiveProvider(),
-  
+
   // Chat completions (unified)
   chat: {
     completions: {
@@ -56,25 +56,42 @@ export const llm = {
         temperature?: number;
       }) => {
         const provider = getActiveProvider();
-        
+
         if (provider === 'gemini') {
           console.log('[LLM] Using Gemini (dev mode)');
           const gemini = getGeminiClient();
-          
-          // Use gemini-2.5-flash which is available in free tier
-          const geminiModel = 'gemini-2.5-flash';
-          
+
+          // Use gemini-flash-latest (Stable 1.5 alias with standard free tier)
+          const geminiModel = 'gemini-flash-latest';
+
           const model = gemini.getGenerativeModel({ model: geminiModel });
-          
+
           // Convert messages to Gemini format
           const prompt = params.messages
             .map(m => `${m.role}: ${m.content}`)
             .join('\n\n');
-          
-          const result = await model.generateContent(prompt);
+
+          // Retry logic for 503 Service Unavailable
+          let result;
+          let attempts = 0;
+          while (attempts < 3) {
+            try {
+              result = await model.generateContent(prompt);
+              break;
+            } catch (err: any) {
+              if (err.message?.includes('503') || err.status === 503) {
+                console.warn(`[GEMINI] 503 Error on attempt ${attempts + 1}, retrying...`);
+                attempts++;
+                await new Promise(r => setTimeout(r, 1000 * attempts)); // Backoff
+              } else {
+                throw err;
+              }
+            }
+          }
+          if (!result) throw new Error('Gemini API 503 Service Unavailable after 3 attempts');
           const response = result.response;
           const text = response.text();
-          
+
           // Return OpenAI-compatible format
           return {
             choices: [
@@ -92,27 +109,27 @@ export const llm = {
             },
           };
         }
-        
+
         // OpenAI/OpenRouter
         const openai = getOpenAIClient();
         return await openai.chat.completions.create(params as any);
       },
     },
   },
-  
+
   // Embeddings (unified)
   embeddings: {
     create: async (params: { model: string; input: string }) => {
       const provider = getActiveProvider();
-      
+
       if (provider === 'gemini') {
         console.log('[LLM] Using Gemini embeddings (dev mode)');
         const gemini = getGeminiClient();
         const model = gemini.getGenerativeModel({ model: 'text-embedding-004' });
-        
+
         const result = await model.embedContent(params.input);
         const embedding = result.embedding.values;
-        
+
         // Return OpenAI-compatible format
         return {
           data: [{ embedding: embedding }],
@@ -121,7 +138,7 @@ export const llm = {
           },
         };
       }
-      
+
       // OpenAI/OpenRouter
       const openai = getOpenAIClient();
       return await openai.embeddings.create(params as any);

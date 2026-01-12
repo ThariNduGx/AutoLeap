@@ -2,9 +2,7 @@ import { NextResponse } from 'next/server';
 import { processQueue } from '@/lib/core/queue-processor';
 
 // Force Node runtime (we need full Node.js for Supabase operations)
-export const runtime = 'nodejs';
-
-// Disable caching
+// export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 /**
@@ -16,10 +14,16 @@ export const dynamic = 'force-dynamic';
 export async function GET(req: Request) {
   try {
     // 1. Verify this is a legitimate cron request
+    // 1. Verify this is a legitimate cron request
+    const { searchParams } = new URL(req.url);
     const authHeader = req.headers.get('authorization');
+    const queryKey = searchParams.get('key');
     const cronSecret = process.env.CRON_SECRET || 'dev-secret-change-in-production';
-    
-    if (authHeader !== `Bearer ${cronSecret}`) {
+
+    const isValidHeader = authHeader === `Bearer ${cronSecret}`;
+    const isValidQuery = queryKey === cronSecret;
+
+    if (!isValidHeader && !isValidQuery) {
       console.warn('[CRON] Unauthorized request');
       return new NextResponse('Unauthorized', { status: 401 });
     }
@@ -31,7 +35,7 @@ export async function GET(req: Request) {
     const processedCount = await processQueue(10);
 
     const duration = Date.now() - startTime;
-    
+
     console.log(`[CRON] ✅ Completed in ${duration}ms`);
 
     return NextResponse.json({
@@ -43,10 +47,10 @@ export async function GET(req: Request) {
 
   } catch (error) {
     console.error('[CRON] Fatal error:', error);
-    
+
     return NextResponse.json(
-      { 
-        success: false, 
+      {
+        success: false,
         error: error instanceof Error ? error.message : 'Unknown error',
       },
       { status: 500 }
