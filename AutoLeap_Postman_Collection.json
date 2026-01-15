@@ -1,0 +1,428 @@
+{
+    "info": {
+        "name": "AutoLeap - Complete Test Suite",
+        "description": "Comprehensive testing suite for AutoLeap with 12 tests covering security, business logic, authentication, and queue processing",
+        "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+    },
+    "item": [
+        {
+            "name": "1. Security & Ingestion",
+            "item": [
+                {
+                    "name": "Test 1: Secure Webhook Ingestion (Success)",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "X-Telegram-Bot-Api-Secret-Token",
+                                "value": "{{telegram_secret}}"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"update_id\": 1001,\n  \"message\": {\n    \"message_id\": 123,\n    \"from\": { \n      \"id\": 781380219, \n      \"first_name\": \"Judge\" \n    },\n    \"chat\": { \n      \"id\": 781380219, \n      \"type\": \"private\" \n    },\n    \"text\": \"Hello, is anyone there?\",\n    \"date\": 1700000000\n  }\n}"
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/webhooks/telegram",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "webhooks",
+                                "telegram"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Test 2: Security Firewall - Invalid Token",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "X-Telegram-Bot-Api-Secret-Token",
+                                "value": "wrong-token-123"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"update_id\": 1002,\n  \"message\": {\n    \"message_id\": 124,\n    \"from\": { \n      \"id\": 781380219, \n      \"first_name\": \"Hacker\" \n    },\n    \"chat\": { \n      \"id\": 781380219, \n      \"type\": \"private\" \n    },\n    \"text\": \"Trying to hack\",\n    \"date\": 1700000001\n  }\n}"
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/webhooks/telegram",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "webhooks",
+                                "telegram"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Test 3: DDoS Protection - Large Payload",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "X-Telegram-Bot-Api-Secret-Token",
+                                "value": "{{telegram_secret}}"
+                            },
+                            {
+                                "key": "Content-Length",
+                                "value": "10000"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"update_id\": 1003,\n  \"message\": {\n    \"message_id\": 125,\n    \"text\": \"This payload is designed to be large. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua...\"\n  }\n}"
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/webhooks/telegram",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "webhooks",
+                                "telegram"
+                            ]
+                        }
+                    },
+                    "response": []
+                }
+            ]
+        },
+        {
+            "name": "2. Business Logic & AI",
+            "item": [
+                {
+                    "name": "Setup: Send Greeting Message",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "X-Telegram-Bot-Api-Secret-Token",
+                                "value": "{{telegram_secret}}"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"update_id\": 2001,\n  \"message\": {\n    \"message_id\": 201,\n    \"from\": { \"id\": 781380219, \"first_name\": \"Tester\" },\n    \"chat\": { \"id\": 781380219, \"type\": \"private\" },\n    \"text\": \"Hi\",\n    \"date\": 1700000100\n  }\n}"
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/webhooks/telegram",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "webhooks",
+                                "telegram"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Test 4: Smart Router - Greeting Detection",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{cron_secret}}"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{base_url}}/api/cron/process-queue",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "cron",
+                                "process-queue"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Setup: Send FAQ Question",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "X-Telegram-Bot-Api-Secret-Token",
+                                "value": "{{telegram_secret}}"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"update_id\": 2002,\n  \"message\": {\n    \"message_id\": 202,\n    \"from\": { \"id\": 781380219, \"first_name\": \"Tester\" },\n    \"chat\": { \"id\": 781380219, \"type\": \"private\" },\n    \"text\": \"What are your business hours?\",\n    \"date\": 1700000200\n  }\n}"
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/webhooks/telegram",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "webhooks",
+                                "telegram"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Test 5: RAG Pipeline - Business FAQ",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{cron_secret}}"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{base_url}}/api/cron/process-queue",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "cron",
+                                "process-queue"
+                            ]
+                        }
+                    },
+                    "response": []
+                }
+            ]
+        },
+        {
+            "name": "3. Authentication",
+            "item": [
+                {
+                    "name": "Test 7: Login - Valid Credentials",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"email\": \"{{test_user_email}}\",\n  \"password\": \"{{test_user_password}}\"\n}"
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/auth/login",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "auth",
+                                "login"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Test 8: Login - Invalid Credentials",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"email\": \"wrong@email.com\",\n  \"password\": \"wrongpassword123\"\n}"
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/auth/login",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "auth",
+                                "login"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Test 9: Login - Missing Fields",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"email\": \"test@example.com\"\n}"
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/auth/login",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "auth",
+                                "login"
+                            ]
+                        }
+                    },
+                    "response": []
+                }
+            ]
+        },
+        {
+            "name": "4. Queue Processing & Cron",
+            "item": [
+                {
+                    "name": "Test 10: Cron - Unauthorized Access",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer wrong-secret"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{base_url}}/api/cron/process-queue",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "cron",
+                                "process-queue"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Test 11: Queue Processing - Empty Queue",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{cron_secret}}"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{base_url}}/api/cron/process-queue",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "cron",
+                                "process-queue"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Test 12: Direct Chat Processing",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"message\": \"Test message for processing\",\n  \"userId\": \"test-user-123\"\n}"
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/chat/process",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "chat",
+                                "process"
+                            ]
+                        }
+                    },
+                    "response": []
+                }
+            ]
+        }
+    ],
+    "variable": [
+        {
+            "key": "base_url",
+            "value": "http://localhost:3000",
+            "type": "string"
+        },
+        {
+            "key": "telegram_secret",
+            "value": "YOUR_TELEGRAM_SECRET_TOKEN",
+            "type": "string"
+        },
+        {
+            "key": "cron_secret",
+            "value": "dev-secret-change-in-production",
+            "type": "string"
+        },
+        {
+            "key": "test_user_email",
+            "value": "test@autoleap.com",
+            "type": "string"
+        },
+        {
+            "key": "test_user_password",
+            "value": "testpassword123",
+            "type": "string"
+        }
+    ]
+}

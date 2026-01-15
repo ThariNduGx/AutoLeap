@@ -1,3 +1,32 @@
+import { Sidebar } from "@/components/dashboard/sidebar"
+import { UserNav } from "@/components/dashboard/user-nav"
+
+export default function DashboardLayout({
+    children,
+}: {
+    children: React.ReactNode
+}) {
+    return (
+        <div className="grid min-h-screen w-full lg:grid-cols-[280px_1fr]">
+            <Sidebar />
+            <div className="flex flex-col">
+                <header className="flex h-14 lg:h-[60px] items-center gap-4 bg-muted/40 px-6 dark:bg-zinc-950">
+                    <div className="w-full flex-1">
+                        <form>
+                            <div className="relative">
+                                {/* Search input could go here */}
+                            </div>
+                        </form>
+                    </div>
+                    <UserNav />
+                </header>
+                <main className="flex flex-1 flex-col gap-4 p-4 lg:gap-6 lg:p-6">
+                    {children}
+                </main>
+            </div>
+        </div>
+    )
+}
 'use client';
 
 import { useState } from 'react';
@@ -49,8 +78,8 @@ export default function DashboardLayout({
                                 key={item.name}
                                 href={item.href}
                                 className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${isActive
-                                        ? 'bg-indigo-50 text-indigo-700'
-                                        : 'text-gray-700 hover:bg-gray-100'
+                                    ? 'bg-indigo-50 text-indigo-700'
+                                    : 'text-gray-700 hover:bg-gray-100'
                                     }`}
                             >
                                 <item.icon size={20} className={isActive ? 'text-indigo-600' : 'text-gray-400'} />
@@ -98,8 +127,8 @@ export default function DashboardLayout({
                                     href={item.href}
                                     onClick={() => setIsSidebarOpen(false)}
                                     className={`flex items-center gap-3 px-3 py-3 rounded-lg text-sm font-medium ${pathname === item.href
-                                            ? 'bg-indigo-50 text-indigo-700'
-                                            : 'text-gray-700'
+                                        ? 'bg-indigo-50 text-indigo-700'
+                                        : 'text-gray-700'
                                         }`}
                                 >
                                     <item.icon size={20} />
