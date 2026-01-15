@@ -13,7 +13,7 @@
     "@supabase/ssr": "^0.7.0",
     "@supabase/supabase-js": "^2.84.0",
     "@upstash/redis": "^1.35.6",
-    "ai": "^5.0.99",
+    "ai": "^5.0.99", 
     "date-fns": "^4.1.0",
     "dotenv": "^17.2.3",
     "googleapis": "^166.0.0",
