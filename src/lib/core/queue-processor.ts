@@ -96,14 +96,19 @@ async function processItem(item: QueueItem): Promise<void> {
 
   console.log('[QUEUE] Processing item:', item.id);
 
-  const message = extractMessage(item.raw_payload);
+  // Detect platform and extract message
+  const platform = item.raw_payload?.platform || 'telegram';
+  const message = platform === 'messenger'
+    ? extractMessengerMessage(item.raw_payload)
+    : extractMessage(item.raw_payload);
+
   if (!message) {
     console.warn('[QUEUE] No message found in payload:', item.id);
     await markCompleted(item.id, 'No message found');
     return;
   }
 
-  console.log('[QUEUE] Message:', message.text.substring(0, 50));
+  console.log(`[QUEUE] [${platform.toUpperCase()}] Message:`, message.text.substring(0, 50));
 
   const intent = classifyIntent(message.text);
   const model = selectModel(intent);
@@ -155,7 +160,14 @@ async function processItem(item: QueueItem): Promise<void> {
 
   if (result.success) {
     await markCompleted(item.id, result.response || 'Processed');
-    await sendResponseToTelegram(item.raw_payload, result.response || 'Processed', item.business_id);
+
+    // Route response to the correct platform
+    if (platform === 'messenger') {
+      await sendResponseToMessenger(item.raw_payload, result.response || 'Processed', item.business_id);
+    } else {
+      await sendResponseToTelegram(item.raw_payload, result.response || 'Processed', item.business_id);
+    }
+
     console.log('[QUEUE] ✅ Response:', result.response?.substring(0, 50));
   } else {
     await markFailed(item.id, result.error || 'Unknown error');
@@ -258,6 +270,9 @@ async function updateConversation(
 
 
 
+/**
+ * Extract message from Telegram payload
+ */
 function extractMessage(payload: any): { text: string; userId: string; chatId: string } | null {
   const message = payload.message || payload.edited_message;
 
@@ -269,6 +284,23 @@ function extractMessage(payload: any): { text: string; userId: string; chatId: s
     text: message.text,
     userId: message.from?.id?.toString() || 'unknown',
     chatId: message.chat?.id?.toString() || 'unknown',
+  };
+}
+
+/**
+ * Extract message from Messenger payload
+ */
+function extractMessengerMessage(payload: any): { text: string; userId: string; chatId: string } | null {
+  const message = payload.message;
+
+  if (!message || !message.text) {
+    return null;
+  }
+
+  return {
+    text: message.text,
+    userId: payload.sender?.id || 'unknown',
+    chatId: payload.sender?.id || 'unknown', // For Messenger, sender ID is the chat ID
   };
 }
 
@@ -324,6 +356,57 @@ async function sendResponseToTelegram(
     }
   } catch (error) {
     console.error('[TELEGRAM] Exception:', error);
+  }
+}
+
+/**
+ * Send response to Messenger user
+ */
+async function sendResponseToMessenger(
+  payload: any,
+  responseText: string,
+  businessId: string
+): Promise<void> {
+  try {
+    const { sendMessengerMessage, sendTypingIndicator } = await import('../infrastructure/messenger');
+
+    const senderId = payload.sender?.id;
+    if (!senderId) return;
+
+    const supabase = getSupabaseClient();
+
+    // Get the business's Facebook Page Access Token
+    const { data: business } = await (supabase
+      .from('businesses') as any)
+      .select('fb_page_access_token')
+      .eq('id', businessId)
+      .single();
+
+    if (!business || !business.fb_page_access_token) {
+      console.error('[MESSENGER] No page access token found for business:', businessId);
+      return;
+    }
+
+    // Show typing indicator
+    await sendTypingIndicator(business.fb_page_access_token, senderId, 'typing_on');
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    // Send the message
+    const sent = await sendMessengerMessage(business.fb_page_access_token, {
+      recipientId: senderId,
+      text: responseText,
+      messagingType: 'RESPONSE',
+    });
+
+    if (!sent) {
+      console.error('[MESSENGER] Failed to send message');
+    }
+
+    // Turn off typing indicator
+    await sendTypingIndicator(business.fb_page_access_token, senderId, 'typing_off');
+
+  } catch (error) {
+    console.error('[MESSENGER] Exception:', error);
   }
 }
 

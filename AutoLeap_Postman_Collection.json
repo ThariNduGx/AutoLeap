@@ -406,7 +406,7 @@
         },
         {
             "key": "telegram_secret",
-            "value": "YOUR_TELEGRAM_SECRET_TOKEN",
+            "value": "YOUR_TELEGRAM_BOT_TOKEN",
             "type": "string"
         },
         {

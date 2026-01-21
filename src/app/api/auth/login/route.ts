@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseClient } from "@/lib/infrastructure/supabase";
 import * as bcrypt from "bcryptjs";
+import { createSessionToken, createSessionCookie } from "@/lib/auth/session";
 
 interface User {
   id: string;
   email: string;
   password_hash: string;
   name: string;
+  role: 'admin' | 'business';
+  business_id?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -35,14 +38,20 @@ export async function POST(request: NextRequest) {
       .single()) as { data: User | null; error: any };
 
     if (queryError || !user) {
+      console.log('[LOGIN] User not found:', email, 'Error:', queryError);
       return NextResponse.json(
         { error: "Invalid email or password" },
         { status: 401 }
       );
     }
 
+    console.log('[LOGIN] User found:', email);
+    console.log('[LOGIN] Password hash exists:', !!user.password_hash);
+
     // Verify password
     const isPasswordValid = await bcrypt.compare(password, user.password_hash);
+
+    console.log('[LOGIN] Password validation result:', isPasswordValid);
 
     if (!isPasswordValid) {
       return NextResponse.json(
@@ -51,18 +60,34 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Return success with user data (excluding password hash)
-    return NextResponse.json(
+    // Create JWT session token
+    const sessionToken = await createSessionToken({
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+      businessId: user.business_id,
+    });
+
+    // Create response with HTTP-only cookie
+    const response = NextResponse.json(
       {
         success: true,
         user: {
           id: user.id,
           email: user.email,
           name: user.name,
+          role: user.role,
+          businessId: user.business_id,
         },
       },
       { status: 200 }
     );
+
+    // Set HTTP-only cookie for session
+    response.headers.set('Set-Cookie', createSessionCookie(sessionToken));
+
+    return response;
   } catch (error) {
     console.error("Login error:", error);
     return NextResponse.json(

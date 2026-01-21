@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -22,6 +22,15 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
+
+  // Check for success query param from signup
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('success') === 'true') {
+      setSuccessMessage('Account created successfully! Please login.');
+    }
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -85,6 +94,11 @@ export default function LoginPage() {
           <Card className="border-0 shadow-none">
             <form onSubmit={handleSubmit}>
               <CardContent className="grid gap-4 p-0">
+                {successMessage && (
+                  <div className="bg-green-50 text-green-700 px-4 py-3 rounded-md text-sm border border-green-200">
+                    {successMessage}
+                  </div>
+                )}
                 {error && (
                   <div className="bg-destructive/15 text-destructive px-4 py-3 rounded-md text-sm">
                     {error}
