@@ -42,6 +42,7 @@ export interface Database {
         Row: {
           id: string;
           name: string;
+          is_active: boolean;
           user_id?: string | null;
           telegram_bot_token?: string | null;
           fb_page_id?: string | null;
@@ -53,6 +54,7 @@ export interface Database {
         Insert: {
           id?: string;
           name: string;
+          is_active?: boolean;
           user_id?: string | null;
           telegram_bot_token?: string | null;
           fb_page_id?: string | null;
@@ -64,6 +66,7 @@ export interface Database {
         Update: {
           id?: string;
           name?: string;
+          is_active?: boolean;
           user_id?: string | null;
           telegram_bot_token?: string | null;
           fb_page_id?: string | null;
@@ -103,6 +106,29 @@ export interface Database {
           business_id?: string | null;
           created_at?: string;
           updated_at?: string;
+        };
+      };
+      request_queue: {
+        Row: {
+          id: string;
+          business_id: string;
+          raw_payload: any;
+          status: 'pending' | 'processing' | 'completed' | 'failed';
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          business_id: string;
+          raw_payload: any;
+          status?: 'pending' | 'processing' | 'completed' | 'failed';
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          business_id?: string;
+          raw_payload?: any;
+          status?: 'pending' | 'processing' | 'completed' | 'failed';
+          created_at?: string;
         };
       };
       // ... other tables

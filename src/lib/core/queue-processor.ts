@@ -196,9 +196,6 @@ async function getActiveConversation(
 /**
  * Get or create conversation
  */
-/**
- * Get or create conversation
- */
 async function getOrCreateConversation(
   businessId: string,
   customerId: string,
@@ -244,9 +241,6 @@ async function getOrCreateConversation(
   return created as any as Conversation;
 }
 
-/**
- * Update conversation
- */
 /**
  * Update conversation
  */

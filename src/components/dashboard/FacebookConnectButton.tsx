@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Facebook, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react';
 
 interface FacebookConnectButtonProps {
@@ -8,108 +8,43 @@ interface FacebookConnectButtonProps {
     onSuccess: () => void;
 }
 
-// Declare Facebook SDK types
-declare global {
-    interface Window {
-        FB: any;
-        fbAsyncInit: () => void;
-    }
-}
-
 export default function FacebookConnectButton({ businessId, onSuccess }: FacebookConnectButtonProps) {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
-    const [sdkLoaded, setSdkLoaded] = useState(false);
 
+    // Handle redirect-back result (fb_success or fb_error in URL)
     useEffect(() => {
-        // Load Facebook SDK
-        loadFacebookSDK();
-    }, []);
+        const params = new URLSearchParams(window.location.search);
+        const fbSuccess = params.get('fb_success');
+        const fbError = params.get('fb_error');
 
-    function loadFacebookSDK() {
-        if (document.getElementById('facebook-jssdk')) {
-            setSdkLoaded(true);
-            return;
+        if (fbSuccess === '1') {
+            // Clean the URL and signal success
+            const clean = window.location.pathname;
+            window.history.replaceState({}, '', clean);
+            onSuccess();
+        } else if (fbError) {
+            const messages: Record<string, string> = {
+                cancelled: 'Facebook login was cancelled.',
+                no_pages: 'No Facebook Pages found. Make sure you selected a Page during authorization.',
+                token_exchange_failed: 'Failed to exchange Facebook token. Please try again.',
+                pages_fetch_failed: 'Could not retrieve your Facebook Pages from Facebook.',
+                db_error: 'Page found but failed to save. Please try again.',
+                server_config_error: 'Server configuration error — FACEBOOK_APP_SECRET is missing.',
+                invalid_state: 'Authorization session expired. Please try again.',
+                no_business: 'No business is linked to your account.',
+            };
+            setError(messages[fbError] || `Authorization failed (${fbError}). Please try again.`);
+            // Clean the URL
+            window.history.replaceState({}, '', window.location.pathname);
         }
+    }, [onSuccess]);
 
-        window.fbAsyncInit = function () {
-            window.FB.init({
-                appId: process.env.NEXT_PUBLIC_FACEBOOK_APP_ID || '123456789', // Replace with your Facebook App ID
-                cookie: true,
-                xfbml: true,
-                version: 'v19.0'
-            });
-            setSdkLoaded(true);
-        };
-
-        // Load the SDK asynchronously
-        const script = document.createElement('script');
-        script.id = 'facebook-jssdk';
-        script.src = 'https://connect.facebook.net/en_US/sdk.js';
-        script.async = true;
-        script.defer = true;
-        document.body.appendChild(script);
-    }
-
-    async function handleFacebookLogin() {
-        if (!sdkLoaded) {
-            setError('Facebook SDK not loaded');
-            return;
-        }
-
+    function handleConnect() {
         setLoading(true);
         setError('');
-
-        try {
-            // Request Facebook Login with required permissions
-            window.FB.login(
-                async function (response: any) {
-                    if (response.authResponse) {
-                        const userAccessToken = response.authResponse.accessToken;
-
-                        // Call our backend to exchange token for Page Access Token
-                        await connectFacebookPage(userAccessToken);
-                    } else {
-                        setError('Facebook login was cancelled');
-                        setLoading(false);
-                    }
-                },
-                {
-                    scope: 'pages_show_list,pages_messaging,pages_manage_metadata',
-                    auth_type: 'rerequest' // Ask again for permissions if previously denied
-                }
-            );
-        } catch (err: any) {
-            setError(err.message || 'Failed to connect Facebook');
-            setLoading(false);
-        }
-    }
-
-    async function connectFacebookPage(userAccessToken: string) {
-        try {
-            const res = await fetch('/api/facebook/connect', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    user_access_token: userAccessToken,
-                }),
-            });
-
-            const data = await res.json();
-
-            if (!res.ok) {
-                throw new Error(data.error || 'Failed to connect Facebook Page');
-            }
-
-            // Success!
-            setLoading(false);
-            onSuccess();
-        } catch (err: any) {
-            setError(err.message);
-            setLoading(false);
-        }
+        // Redirect to server-side OAuth flow
+        window.location.href = '/api/auth/facebook';
     }
 
     return (
@@ -121,15 +56,17 @@ export default function FacebookConnectButton({ businessId, onSuccess }: Faceboo
             </p>
 
             {error && (
-                <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg flex items-center gap-2 text-red-700 text-sm">
-                    <AlertCircle size={16} />
-                    {error}
+                <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm text-left">
+                    <div className="flex items-center gap-2 font-medium">
+                        <AlertCircle size={16} />
+                        {error}
+                    </div>
                 </div>
             )}
 
             <button
-                onClick={handleFacebookLogin}
-                disabled={loading || !sdkLoaded}
+                onClick={handleConnect}
+                disabled={loading}
                 className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 mx-auto"
             >
                 {loading ? (
@@ -148,10 +85,6 @@ export default function FacebookConnectButton({ businessId, onSuccess }: Faceboo
             <p className="text-xs text-gray-400 mt-3">
                 You'll be redirected to Facebook to authorize access
             </p>
-
-            {!sdkLoaded && (
-                <p className="text-xs text-gray-400 mt-2">Loading Facebook SDK...</p>
-            )}
         </div>
     );
 }

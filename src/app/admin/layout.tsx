@@ -6,6 +6,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import {
     LayoutDashboard,
     Building2,
+    Users,
     BarChart2,
     Settings,
     Menu,
@@ -25,6 +26,7 @@ export default function AdminLayout({
     const navigation = [
         { name: 'Overview', href: '/admin', icon: LayoutDashboard },
         { name: 'Businesses', href: '/admin/businesses', icon: Building2 },
+        { name: 'Users', href: '/admin/users', icon: Users },
         { name: 'Analytics', href: '/admin/analytics', icon: BarChart2 },
         { name: 'Settings', href: '/admin/settings', icon: Settings },
     ];

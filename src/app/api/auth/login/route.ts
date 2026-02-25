@@ -60,6 +60,22 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Check business suspension (only for business users with a linked business)
+    if (user.role === 'business' && user.business_id) {
+      const { data: business } = await (supabase
+        .from('businesses') as any)
+        .select('is_active')
+        .eq('id', user.business_id)
+        .single();
+
+      if (business && business.is_active === false) {
+        return NextResponse.json(
+          { error: 'Your account has been suspended. Please contact support.' },
+          { status: 403 }
+        );
+      }
+    }
+
     // Create JWT session token
     const sessionToken = await createSessionToken({
       id: user.id,

@@ -101,7 +101,6 @@ export async function POST(request: NextRequest) {
             .from('businesses') as any)
             .update({
                 telegram_bot_token: bot_token,
-                updated_at: new Date().toISOString(),
             })
             .eq('id', businessId);
 

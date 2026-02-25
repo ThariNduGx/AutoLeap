@@ -105,7 +105,7 @@ export function canAccessBusiness(user: SessionUser | null, businessId: string):
 export function createSessionCookie(token: string): string {
   const isProduction = process.env.NODE_ENV === 'production';
   
-  return `session=${token}; HttpOnly; Path=/; Max-Age=${7 * 24 * 60 * 60}; SameSite=Strict${
+  return `session=${token}; HttpOnly; Path=/; Max-Age=${7 * 24 * 60 * 60}; SameSite=Lax${
     isProduction ? '; Secure' : ''
   }`;
 }

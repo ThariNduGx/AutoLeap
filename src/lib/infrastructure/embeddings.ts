@@ -68,29 +68,32 @@ export async function storeFAQ(
       return false;
     }
 
-    // 2. Generate embedding for question + answer
-    const textToEmbed = `${question} ${answer}`;
-    const embedding = await generateEmbedding(textToEmbed, businessId);
+    // 2. Generate and store embedding (non-fatal — FAQ is usable without it)
+    try {
+      const textToEmbed = `${question} ${answer}`;
+      const embedding = await generateEmbedding(textToEmbed, businessId);
 
-    if (!embedding) {
-      console.error('[FAQ] Failed to generate embedding');
-      return false;
-    }
+      if (!embedding) {
+        console.warn('[FAQ] ⚠️ Embedding generation failed — FAQ saved without embedding');
+      } else {
+        const isGemini = process.env.USE_GEMINI_FOR_DEV === 'true';
+        const embeddingColumn = isGemini ? 'embedding_gemini' : 'embedding';
 
-    // 3. Store embedding (in the correct column based on provider)
-    const isGemini = process.env.USE_GEMINI_FOR_DEV === 'true';
-    const embeddingColumn = isGemini ? 'embedding_gemini' : 'embedding';
+        const { error: embeddingError } = await (supabase
+          .from('faq_embeddings') as any)
+          .insert({
+            faq_id: faqDoc.id,
+            [embeddingColumn]: embedding,
+          });
 
-    const { error: embeddingError } = await (supabase
-      .from('faq_embeddings') as any)
-      .insert({
-        faq_id: faqDoc.id,
-        [embeddingColumn]: embedding,
-      });
-
-    if (embeddingError) {
-      console.error('[FAQ] Failed to store embedding:', embeddingError);
-      return false;
+        if (embeddingError) {
+          console.warn('[FAQ] ⚠️ Embedding storage failed — FAQ saved without embedding:', embeddingError.message);
+        } else {
+          console.log('[FAQ] ✅ Embedding stored');
+        }
+      }
+    } catch (embErr) {
+      console.warn('[FAQ] ⚠️ Embedding step threw — FAQ saved without embedding:', embErr);
     }
 
     console.log('[FAQ] ✅ Stored FAQ:', question.substring(0, 50));

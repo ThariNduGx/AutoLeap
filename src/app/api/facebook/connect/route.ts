@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { getSession, hasRole } from '@/lib/auth/session';
-import { createSupabaseClient } from '@/lib/database/supabase';
+import { getSupabaseClient } from '@/lib/infrastructure/supabase';
 import { getUserPages, subscribePageToWebhook } from '@/lib/infrastructure/messenger';
 
 // Force edge runtime for instant startup
@@ -60,11 +60,31 @@ export async function POST(req: NextRequest) {
         console.log('[FACEBOOK] Connecting page for business:', businessId);
 
         // Step A: Fetch user's managed pages from Facebook
-        const pages = await getUserPages(body.user_access_token);
+        let pages;
+        try {
+            pages = await getUserPages(body.user_access_token);
+        } catch (err: any) {
+            return NextResponse.json(
+                {
+                    error: 'Failed to fetch Facebook Pages',
+                    details: err.message,
+                    help: 'Make sure your Facebook App has the pages_show_list permission approved.'
+                },
+                { status: 500 }
+            );
+        }
 
         if (!pages || pages.length === 0) {
             return NextResponse.json(
-                { error: 'No Facebook Pages found for this user' },
+                {
+                    error: 'No Facebook Pages found for this user',
+                    help: [
+                        '1. Make sure you are an Admin or Editor of at least one Facebook Page',
+                        '2. During Facebook login, you must select which Pages to grant access to',
+                        '3. Click "Connect Facebook Page" again and select your page in the Facebook popup',
+                        '4. If you deselected your pages, go to Facebook Settings > Business Integrations and remove this app, then try again'
+                    ]
+                },
                 { status: 404 }
             );
         }
@@ -105,7 +125,7 @@ export async function POST(req: NextRequest) {
         }
 
         // Step D: Save to database
-        const supabase = createSupabaseClient();
+        const supabase = getSupabaseClient();
 
         // Check if page is already connected to another business
         const { data: existingConnection } = await (supabase
@@ -132,7 +152,6 @@ export async function POST(req: NextRequest) {
                 fb_page_id: pageId,
                 fb_page_access_token: pageAccessToken,
                 fb_page_name: pageName,
-                updated_at: new Date().toISOString(),
             })
             .eq('id', businessId)
             .select()

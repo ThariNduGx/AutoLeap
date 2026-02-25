@@ -26,6 +26,7 @@ export async function GET(request: NextRequest) {
             .select(`
         id,
         name,
+        is_active,
         telegram_bot_token,
         fb_page_id,
         fb_page_name,
@@ -43,18 +44,24 @@ export async function GET(request: NextRequest) {
             return NextResponse.json({ error: 'Failed to fetch businesses' }, { status: 500 });
         }
 
-        // Get FAQ counts for each business
+        // Get FAQ counts and message counts for each business
         const businessesWithStats = await Promise.all(
             (businesses || []).map(async (business: any) => {
-                // Count FAQs
-                const { count: faqCount } = await (supabase
-                    .from('faqs') as any)
-                    .select('*', { count: 'exact', head: true })
-                    .eq('business_id', business.id);
+                // Count FAQs and completed messages in parallel
+                const [faqRes, msgRes] = await Promise.all([
+                    (supabase.from('faqs') as any)
+                        .select('*', { count: 'exact', head: true })
+                        .eq('business_id', business.id),
+                    (supabase.from('request_queue') as any)
+                        .select('*', { count: 'exact', head: true })
+                        .eq('business_id', business.id)
+                        .eq('status', 'completed'),
+                ]);
 
                 return {
                     id: business.id,
                     name: business.name,
+                    isActive: business.is_active !== false,
                     owner: business.users ? {
                         email: business.users.email,
                         name: business.users.name,
@@ -64,7 +71,8 @@ export async function GET(request: NextRequest) {
                         facebook: !!business.fb_page_id,
                     },
                     facebookPageName: business.fb_page_name,
-                    faqCount: faqCount || 0,
+                    faqCount: faqRes.count || 0,
+                    messageCount: msgRes.count || 0,
                     createdAt: business.created_at,
                 };
             })

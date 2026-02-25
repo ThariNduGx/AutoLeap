@@ -2,14 +2,20 @@
 
 import { ArrowUpRight, Building2, MessageSquare, Zap, Activity } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { formatDistanceToNow } from 'date-fns';
+
+interface AdminStats {
+    totalBusinesses: number;
+    telegramConnections: number;
+    facebookConnections: number;
+    messages: { completed: number; failed: number; pending: number };
+    totalCostUsd: number;
+    recentBusinesses: { name: string; createdAt: string }[];
+}
 
 export default function AdminDashboard() {
-    const [stats, setStats] = useState({
-        totalBusinesses: 0,
-        telegramConnections: 0,
-        facebookConnections: 0,
-        totalMessages: 0,
-    });
+    const [stats, setStats] = useState<AdminStats | null>(null);
+    const [loading, setLoading] = useState(true);
 
     useEffect(() => {
         fetchStats();
@@ -17,28 +23,43 @@ export default function AdminDashboard() {
 
     async function fetchStats() {
         try {
-            const res = await fetch('/api/admin/businesses');
+            const res = await fetch('/api/admin/stats');
             const data = await res.json();
-
             if (data.success) {
-                const businesses = data.businesses || [];
-                setStats({
-                    totalBusinesses: businesses.length,
-                    telegramConnections: businesses.filter((b: any) => b.integrations.telegram).length,
-                    facebookConnections: businesses.filter((b: any) => b.integrations.facebook).length,
-                    totalMessages: 1245, // TODO: Get from actual data
-                });
+                setStats(data);
             }
         } catch (error) {
             console.error('Failed to fetch stats:', error);
+        } finally {
+            setLoading(false);
         }
     }
 
     const statCards = [
-        { name: 'Total Businesses', value: stats.totalBusinesses, change: '+12%', icon: Building2, color: 'bg-blue-100 text-blue-600' },
-        { name: 'Telegram Bots', value: stats.telegramConnections, change: '+8%', icon: MessageSquare, color: 'bg-indigo-100 text-indigo-600' },
-        { name: 'Facebook Pages', value: stats.facebookConnections, change: '+24%', icon: Zap, color: 'bg-purple-100 text-purple-600' },
-        { name: 'Messages Processed', value: stats.totalMessages.toLocaleString(), change: '+18%', icon: Activity, color: 'bg-green-100 text-green-600' },
+        {
+            name: 'Total Businesses',
+            value: stats?.totalBusinesses ?? '—',
+            icon: Building2,
+            color: 'bg-blue-100 text-blue-600',
+        },
+        {
+            name: 'Telegram Bots',
+            value: stats?.telegramConnections ?? '—',
+            icon: MessageSquare,
+            color: 'bg-indigo-100 text-indigo-600',
+        },
+        {
+            name: 'Facebook Pages',
+            value: stats?.facebookConnections ?? '—',
+            icon: Zap,
+            color: 'bg-purple-100 text-purple-600',
+        },
+        {
+            name: 'Messages Processed',
+            value: stats ? stats.messages.completed.toLocaleString() : '—',
+            icon: Activity,
+            color: 'bg-green-100 text-green-600',
+        },
     ];
 
     return (
@@ -56,12 +77,20 @@ export default function AdminDashboard() {
                             <div className={`p-3 rounded-xl ${stat.color}`}>
                                 <stat.icon size={24} />
                             </div>
-                            <span className="flex items-center text-xs font-medium text-green-600 bg-green-50 px-2 py-1 rounded-full">
-                                {stat.change} <ArrowUpRight size={12} className="ml-1" />
-                            </span>
+                            {stats && (
+                                <span className="flex items-center text-xs font-medium text-green-600 bg-green-50 px-2 py-1 rounded-full">
+                                    Live <ArrowUpRight size={12} className="ml-1" />
+                                </span>
+                            )}
                         </div>
                         <p className="text-gray-500 text-sm font-medium">{stat.name}</p>
-                        <h3 className="text-2xl font-bold text-gray-900 mt-1">{stat.value}</h3>
+                        <h3 className="text-2xl font-bold text-gray-900 mt-1">
+                            {loading ? (
+                                <span className="inline-block w-12 h-7 bg-gray-200 rounded animate-pulse" />
+                            ) : (
+                                stat.value
+                            )}
+                        </h3>
                     </div>
                 ))}
             </div>
@@ -70,39 +99,59 @@ export default function AdminDashboard() {
                 {/* Recent Activity */}
                 <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
                     <h2 className="text-lg font-semibold text-gray-900 mb-6">Recent Activity</h2>
-                    <div className="space-y-4">
-                        {[
-                            { action: 'New business onboarded', business: 'AC Services Co', time: '2 mins ago' },
-                            { action: 'Facebook page connected', business: 'Clean & Shine', time: '15 mins ago' },
-                            { action: 'Telegram bot activated', business: 'Pet Grooming Pro', time: '1 hour ago' },
-                        ].map((activity, i) => (
-                            <div key={i} className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg">
-                                <div className="w-2 h-2 rounded-full bg-green-500 mt-2" />
-                                <div className="flex-1">
-                                    <p className="text-sm font-medium text-gray-900">{activity.action}</p>
-                                    <p className="text-xs text-gray-500 mt-0.5">{activity.business} • {activity.time}</p>
+                    {loading ? (
+                        <div className="space-y-3">
+                            {[1, 2, 3].map(i => (
+                                <div key={i} className="h-14 bg-gray-100 rounded-lg animate-pulse" />
+                            ))}
+                        </div>
+                    ) : stats && stats.recentBusinesses.length > 0 ? (
+                        <div className="space-y-4">
+                            {stats.recentBusinesses.map((biz, i) => (
+                                <div key={i} className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg">
+                                    <div className="w-2 h-2 rounded-full bg-green-500 mt-2 flex-shrink-0" />
+                                    <div className="flex-1 min-w-0">
+                                        <p className="text-sm font-medium text-gray-900">New business onboarded</p>
+                                        <p className="text-xs text-gray-500 mt-0.5 truncate">
+                                            {biz.name} • {formatDistanceToNow(new Date(biz.createdAt), { addSuffix: true })}
+                                        </p>
+                                    </div>
                                 </div>
-                            </div>
-                        ))}
-                    </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <p className="text-sm text-gray-400 text-center py-6">No businesses registered yet</p>
+                    )}
                 </div>
 
-                {/* Quick Actions */}
+                {/* Platform Summary */}
                 <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-                    <h2 className="text-lg font-semibold text-gray-900 mb-6">Quick Actions</h2>
-                    <div className="space-y-3">
-                        <button className="w-full text-left p-4 bg-red-50 hover:bg-red-100 rounded-xl transition-colors border border-red-100">
-                            <h3 className="font-medium text-gray-900 mb-1">View All Businesses</h3>
-                            <p className="text-sm text-gray-500">Manage and monitor business accounts</p>
-                        </button>
-                        <button className="w-full text-left p-4 bg-gray-50 hover:bg-gray-100 rounded-xl transition-colors border border-gray-100">
-                            <h3 className="font-medium text-gray-900 mb-1">System Settings</h3>
-                            <p className="text-sm text-gray-500">Configure platform settings</p>
-                        </button>
-                        <button className="w-full text-left p-4 bg-gray-50 hover:bg-gray-100 rounded-xl transition-colors border border-gray-100">
-                            <h3 className="font-medium text-gray-900 mb-1">View Analytics</h3>
-                            <p className="text-sm text-gray-500">Detailed platform analytics</p>
-                        </button>
+                    <h2 className="text-lg font-semibold text-gray-900 mb-6">Platform Summary</h2>
+                    <div className="space-y-1">
+                        <div className="flex items-center justify-between py-3 border-b border-gray-100">
+                            <span className="text-sm text-gray-600">Messages Completed</span>
+                            <span className="text-sm font-semibold text-green-600">
+                                {loading ? '—' : stats?.messages.completed.toLocaleString()}
+                            </span>
+                        </div>
+                        <div className="flex items-center justify-between py-3 border-b border-gray-100">
+                            <span className="text-sm text-gray-600">Messages Failed</span>
+                            <span className="text-sm font-semibold text-red-500">
+                                {loading ? '—' : stats?.messages.failed.toLocaleString()}
+                            </span>
+                        </div>
+                        <div className="flex items-center justify-between py-3 border-b border-gray-100">
+                            <span className="text-sm text-gray-600">Messages Pending</span>
+                            <span className="text-sm font-semibold text-yellow-600">
+                                {loading ? '—' : stats?.messages.pending.toLocaleString()}
+                            </span>
+                        </div>
+                        <div className="flex items-center justify-between py-3">
+                            <span className="text-sm text-gray-600">Total Platform Cost</span>
+                            <span className="text-sm font-semibold text-gray-900">
+                                {loading ? '—' : `$${stats?.totalCostUsd.toFixed(4)}`}
+                            </span>
+                        </div>
                     </div>
                 </div>
             </div>

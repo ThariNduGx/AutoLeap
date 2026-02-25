@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createSupabaseClient } from '@/lib/database/supabase';
+import { getSupabaseClient } from '@/lib/infrastructure/supabase';
 import { verifyWebhookSignature } from '@/lib/infrastructure/messenger';
 
 // Force edge runtime for instant startup and low cost
@@ -163,7 +163,7 @@ async function processIncomingMessage(message: {
     rawPayload: any;
 }) {
     try {
-        const supabase = createSupabaseClient();
+        const supabase = getSupabaseClient();
 
         // Lookup the business by fb_page_id (recipientId is the Page ID)
         const { data: business, error: businessError } = await (supabase
@@ -204,6 +204,12 @@ async function processIncomingMessage(message: {
         }
 
         console.log('[MESSENGER WEBHOOK] ✅ Message queued for processing');
+
+        // Trigger queue processor immediately (fire-and-forget — don't await)
+        const baseUrl = process.env.NEXT_PUBLIC_BASE_URL;
+        const cronSecret = process.env.CRON_SECRET || 'dev-secret-change-in-production';
+        fetch(`${baseUrl}/api/cron/process-queue?key=${cronSecret}`)
+            .catch(err => console.warn('[MESSENGER WEBHOOK] Failed to trigger queue processor:', err));
 
     } catch (error) {
         console.error('[MESSENGER WEBHOOK] Message processing error:', error);

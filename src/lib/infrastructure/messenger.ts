@@ -3,7 +3,7 @@
  * Handles sending messages and managing page interactions
  */
 
-const GRAPH_API_VERSION = 'v19.0';
+const GRAPH_API_VERSION = 'v24.0';
 const GRAPH_API_BASE = `https://graph.facebook.com/${GRAPH_API_VERSION}`;
 
 interface MessengerMessage {
@@ -207,23 +207,42 @@ export async function subscribePageToWebhook(
  * @param userAccessToken - User Access Token from Facebook Login
  */
 export async function getUserPages(userAccessToken: string): Promise<any[]> {
-    const url = `${GRAPH_API_BASE}/me/accounts?access_token=${userAccessToken}`;
+    // Request pages with the Page Access Token included
+    const url = `${GRAPH_API_BASE}/me/accounts?fields=id,name,access_token,category&access_token=${userAccessToken}`;
 
     try {
-        console.log('[MESSENGER] Fetching user pages');
+        console.log('[MESSENGER] Fetching user pages from Facebook...');
+        console.log('[MESSENGER] Token preview:', userAccessToken.substring(0, 20) + '...');
 
         const response = await fetch(url);
         const data = await response.json();
 
+        console.log('[MESSENGER] Facebook API Response status:', response.status);
+        console.log('[MESSENGER] Facebook API Response:', JSON.stringify(data, null, 2));
+
         if (!response.ok || 'error' in data) {
-            console.error('[MESSENGER] Failed to fetch pages:', data.error?.message);
-            return [];
+            const errorMsg = data.error?.message || 'Unknown Facebook API error';
+            console.error('[MESSENGER] Failed to fetch pages:', errorMsg);
+            console.error('[MESSENGER] Error details:', JSON.stringify(data.error, null, 2));
+            throw new Error(`Facebook API error: ${errorMsg}`);
         }
 
-        return data.data || [];
-    } catch (error) {
-        console.error('[MESSENGER] Exception fetching pages:', error);
-        return [];
+        const pages = data.data || [];
+        console.log(`[MESSENGER] Found ${pages.length} page(s)`);
+
+        if (pages.length > 0) {
+            console.log('[MESSENGER] Pages found:', pages.map((p: any) => ({ id: p.id, name: p.name })));
+        } else {
+            console.log('[MESSENGER] No pages found. This could mean:');
+            console.log('  1. User is not an admin of any Facebook Pages');
+            console.log('  2. User did not grant page permissions during Facebook login');
+            console.log('  3. The Facebook App does not have pages_show_list permission');
+        }
+
+        return pages;
+    } catch (error: any) {
+        console.error('[MESSENGER] Exception fetching pages:', error.message);
+        throw error; // Re-throw so the API route can handle it
     }
 }
 

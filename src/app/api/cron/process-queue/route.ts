@@ -14,7 +14,6 @@ export const dynamic = 'force-dynamic';
 export async function GET(req: Request) {
   try {
     // 1. Verify this is a legitimate cron request
-    // 1. Verify this is a legitimate cron request
     const { searchParams } = new URL(req.url);
     const authHeader = req.headers.get('authorization');
     const queryKey = searchParams.get('key');

@@ -25,7 +25,6 @@ export async function POST(request: NextRequest) {
                 fb_page_id: null,
                 fb_page_access_token: null,
                 fb_page_name: null,
-                updated_at: new Date().toISOString(),
             })
             .eq('id', session.businessId);
 
