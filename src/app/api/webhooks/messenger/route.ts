@@ -128,10 +128,41 @@ export async function POST(req: Request) {
                     });
                 }
 
-                // Handle postbacks (button clicks)
-                if (event.postback) {
-                    console.log('[MESSENGER WEBHOOK] Postback received:', event.postback.payload);
-                    // TODO: Handle postbacks if needed
+                // Handle quick reply slot selection (payload: "SLOT_YYYY-MM-DD_HH:MM")
+                if (event.message?.quick_reply?.payload?.startsWith('SLOT_')) {
+                    const parts = event.message.quick_reply.payload.split('_'); // ['SLOT', 'YYYY-MM-DD', 'HH:MM']
+                    const date = parts[1];
+                    const time = parts[2];
+                    if (date && time) {
+                        console.log('[MESSENGER WEBHOOK] Slot selected:', date, time);
+                        await processIncomingMessage({
+                            senderId,
+                            recipientId,
+                            text: `slot:${date}:${time}`,  // matches Telegram slot: format
+                            messageId: event.message.mid,
+                            timestamp: event.timestamp,
+                            rawPayload: event,
+                        });
+                    }
+                    continue;
+                }
+
+                // Handle postbacks (button clicks from templates)
+                if (event.postback?.payload?.startsWith('SLOT_')) {
+                    const parts = event.postback.payload.split('_');
+                    const date = parts[1];
+                    const time = parts[2];
+                    if (date && time) {
+                        await processIncomingMessage({
+                            senderId,
+                            recipientId,
+                            text: `slot:${date}:${time}`,
+                            messageId: `postback_${event.timestamp}`,
+                            timestamp: event.timestamp,
+                            rawPayload: event,
+                        });
+                    }
+                    continue;
                 }
 
                 // Handle message reads, deliveries, etc.
@@ -207,9 +238,13 @@ async function processIncomingMessage(message: {
 
         // Trigger queue processor immediately (fire-and-forget — don't await)
         const baseUrl = process.env.NEXT_PUBLIC_BASE_URL;
-        const cronSecret = process.env.CRON_SECRET || 'dev-secret-change-in-production';
-        fetch(`${baseUrl}/api/cron/process-queue?key=${cronSecret}`)
-            .catch(err => console.warn('[MESSENGER WEBHOOK] Failed to trigger queue processor:', err));
+        const cronSecret = process.env.CRON_SECRET;
+        if (baseUrl && cronSecret) {
+            fetch(`${baseUrl}/api/cron/process-queue?key=${cronSecret}`)
+                .catch(err => console.warn('[MESSENGER WEBHOOK] Failed to trigger queue processor:', err));
+        } else {
+            console.warn('[MESSENGER WEBHOOK] NEXT_PUBLIC_BASE_URL or CRON_SECRET not set — skipping queue trigger');
+        }
 
     } catch (error) {
         console.error('[MESSENGER WEBHOOK] Message processing error:', error);

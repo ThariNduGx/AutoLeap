@@ -21,6 +21,8 @@ interface ProcessingResult {
   error?: string;
   costIncurred: number;
   keyboard?: InlineKeyboardButton[][];
+  /** Messenger quick-reply slots { date, slots[] } when platform is 'messenger' */
+  messengerSlots?: { date: string; slots: string[] };
 }
 
 interface Conversation {
@@ -37,21 +39,23 @@ interface Conversation {
 
 /**
  * Main queue processor - pulls pending items and routes them.
+ * Uses claim_queue_items() SQL function which atomically marks rows as
+ * 'processing' using FOR UPDATE SKIP LOCKED, preventing duplicate processing
+ * when two cron invocations overlap.
  */
 export async function processQueue(batchSize: number = 10): Promise<number> {
   const supabase = getSupabaseClient();
 
   console.log('[QUEUE] Starting batch processing...');
 
-  const { data: items, error: fetchError } = await (supabase
-    .from('request_queue') as any)
-    .select('*')
-    .eq('status', 'pending')
-    .order('created_at', { ascending: true })
-    .limit(batchSize);
+  // Atomic claim: SELECT + UPDATE in one statement with SKIP LOCKED
+  const { data: items, error: fetchError } = await (supabase.rpc as any)(
+    'claim_queue_items',
+    { p_batch_size: batchSize }
+  );
 
   if (fetchError) {
-    console.error('[QUEUE] Failed to fetch items:', fetchError);
+    console.error('[QUEUE] Failed to claim items:', fetchError);
     return 0;
   }
 
@@ -84,18 +88,7 @@ export async function processQueue(batchSize: number = 10): Promise<number> {
  * Process a single queue item.
  */
 async function processItem(item: QueueItem): Promise<void> {
-  const supabase = getSupabaseClient();
-
-  const { error: updateError } = await (supabase.from('request_queue') as any)
-    .update({ status: 'processing' })
-    .eq('id', item.id)
-    .eq('status', 'pending');
-
-  if (updateError) {
-    console.error('[QUEUE] Failed to mark as processing:', updateError);
-    return;
-  }
-
+  // Status already set to 'processing' by claim_queue_items() atomically
   console.log('[QUEUE] Processing item:', item.id);
 
   // Detect platform and extract message
@@ -148,7 +141,7 @@ async function processItem(item: QueueItem): Promise<void> {
       break;
 
     case 'booking':
-      result = await handleBooking(message, item.business_id, model);
+      result = await handleBooking(message, item.business_id, model, platform);
       break;
 
     case 'status':
@@ -159,15 +152,16 @@ async function processItem(item: QueueItem): Promise<void> {
       result = await handleComplaint(message, item.business_id, model);
       break;
 
-    default:
+    default: {
       // Check if this is a continuation of a booking conversation
       const conversation = await getActiveConversation(item.business_id, message.chatId);
       if (conversation && conversation.intent === 'booking') {
         console.log('[QUEUE] Continuing booking conversation');
-        result = await handleBooking(message, item.business_id, model);
+        result = await handleBooking(message, item.business_id, model, platform);
       } else {
         result = await handleUnknown(message, item.business_id, model);
       }
+    }
   }
 
   if (result.success) {
@@ -175,7 +169,12 @@ async function processItem(item: QueueItem): Promise<void> {
 
     // Route response to the correct platform
     if (platform === 'messenger') {
-      await sendResponseToMessenger(item.raw_payload, result.response || 'Processed', item.business_id);
+      await sendResponseToMessenger(
+        item.raw_payload,
+        result.response || 'Processed',
+        item.business_id,
+        result.messengerSlots
+      );
     } else {
       await sendResponseToTelegram(
         item.raw_payload,
@@ -402,22 +401,28 @@ async function sendResponseToTelegram(
 }
 
 /**
- * Send response to Messenger user
+ * Send response to Messenger user.
+ * When messengerSlots is provided, sends quick-reply buttons for slot selection.
  */
 async function sendResponseToMessenger(
   payload: any,
   responseText: string,
-  businessId: string
+  businessId: string,
+  messengerSlots?: { date: string; slots: string[] }
 ): Promise<void> {
   try {
-    const { sendMessengerMessage, sendTypingIndicator } = await import('../infrastructure/messenger');
+    const {
+      sendMessengerMessage,
+      sendTypingIndicator,
+      sendMessengerMessageWithQuickReplies,
+      buildMessengerSlotPrompt,
+    } = await import('../infrastructure/messenger');
 
     const senderId = payload.sender?.id;
     if (!senderId) return;
 
     const supabase = getSupabaseClient();
 
-    // Get the business's Facebook Page Access Token
     const { data: business } = await (supabase
       .from('businesses') as any)
       .select('fb_page_access_token')
@@ -429,22 +434,34 @@ async function sendResponseToMessenger(
       return;
     }
 
-    // Show typing indicator
     await sendTypingIndicator(business.fb_page_access_token, senderId, 'typing_on');
     await new Promise(resolve => setTimeout(resolve, 500));
 
-    // Send the message
-    const sent = await sendMessengerMessage(business.fb_page_access_token, {
-      recipientId: senderId,
-      text: responseText,
-      messagingType: 'RESPONSE',
-    });
-
-    if (!sent) {
-      console.error('[MESSENGER] Failed to send message');
+    if (messengerSlots && messengerSlots.slots.length > 0) {
+      // Send the AI text first, then the slot quick-reply buttons
+      await sendMessengerMessage(business.fb_page_access_token, {
+        recipientId: senderId,
+        text: responseText,
+        messagingType: 'RESPONSE',
+      });
+      await sendMessengerMessageWithQuickReplies(
+        business.fb_page_access_token,
+        senderId,
+        buildMessengerSlotPrompt(messengerSlots.date),
+        messengerSlots.slots,
+        messengerSlots.date
+      );
+    } else {
+      const sent = await sendMessengerMessage(business.fb_page_access_token, {
+        recipientId: senderId,
+        text: responseText,
+        messagingType: 'RESPONSE',
+      });
+      if (!sent) {
+        console.error('[MESSENGER] Failed to send message');
+      }
     }
 
-    // Turn off typing indicator
     await sendTypingIndicator(business.fb_page_access_token, senderId, 'typing_off');
 
   } catch (error) {
@@ -542,7 +559,8 @@ Instructions:
 async function handleBooking(
   message: { text: string; userId: string; chatId: string },
   businessId: string,
-  model: string
+  model: string,
+  platform: string = 'telegram'
 ): Promise<ProcessingResult> {
   console.log('[BOOKING] Starting tool-calling agent...');
 
@@ -625,6 +643,7 @@ Continue helping them complete the booking. State: ${JSON.stringify(conversation
         const functionResponses = [];
 
         let pendingSlotKeyboard: InlineKeyboardButton[][] | undefined;
+        let pendingMessengerSlots: { date: string; slots: string[] } | undefined;
 
       for (const call of functionCalls) {
           console.log(`[TOOL] Executing: ${call.name}`);
@@ -641,12 +660,17 @@ Continue helping them complete the booking. State: ${JSON.stringify(conversation
 
           console.log(`[TOOL] Result:`, JSON.stringify(toolResult, null, 2));
 
-          // Build inline keyboard when slots are returned
+          // Build slot-selection UI for the appropriate channel
           if (call.name === 'get_available_slots' && toolResult.available_slots?.length > 0) {
-            const { buildSlotKeyboard } = await import('../infrastructure/telegram');
-            pendingSlotKeyboard = buildSlotKeyboard(toolResult.available_slots, toolArgs.date);
             conversation.state.pending_slots = toolResult.available_slots;
             conversation.state.pending_date = toolArgs.date;
+            if (platform === 'messenger') {
+              // Messenger uses quick replies instead of inline keyboards
+              pendingMessengerSlots = { date: toolArgs.date, slots: toolResult.available_slots };
+            } else {
+              const { buildSlotKeyboard } = await import('../infrastructure/telegram');
+              pendingSlotKeyboard = buildSlotKeyboard(toolResult.available_slots, toolArgs.date);
+            }
           }
 
           // Update conversation state on successful booking + log TCR
@@ -654,10 +678,10 @@ Continue helping them complete the booking. State: ${JSON.stringify(conversation
             conversation.state.booked = true;
             conversation.state.appointment = toolResult;
             conversation.state.pending_slots = undefined;
-            await logBookingAttempt(businessId, conversation.id, message.chatId, 'telegram', true, iterations);
+            await logBookingAttempt(businessId, conversation.id, message.chatId, platform, true, iterations);
           }
           if (call.name === 'book_appointment' && !toolResult.success) {
-            await logBookingAttempt(businessId, conversation.id, message.chatId, 'telegram', false, iterations, toolResult.error);
+            await logBookingAttempt(businessId, conversation.id, message.chatId, platform, false, iterations, toolResult.error);
           }
 
           functionResponses.push({
@@ -695,6 +719,7 @@ Continue helping them complete the booking. State: ${JSON.stringify(conversation
           response: finalText,
           costIncurred: cost,
           keyboard: pendingSlotKeyboard,
+          messengerSlots: pendingMessengerSlots,
         };
       }
 
@@ -715,7 +740,7 @@ Continue helping them complete the booking. State: ${JSON.stringify(conversation
 
     console.warn('[BOOKING] Max iterations reached — escalating to owner');
     await updateConversation(conversation.id, conversation.state, conversation.history);
-    await logBookingAttempt(businessId, conversation.id, message.chatId, 'telegram', false, totalTokens, 'max_iterations');
+    await logBookingAttempt(businessId, conversation.id, message.chatId, platform, false, maxIterations, 'max_iterations');
 
     // Notify owner
     const { data: biz } = await (getSupabaseClient().from('businesses') as any)
