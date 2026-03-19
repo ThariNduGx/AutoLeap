@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd:*)",
+      "Read(//d/New Files/Personal/Web Projects/AutoLeap/**)",
+      "Bash(dir:*)",
+      "Bash(git -C \"d:/New Files/Personal/Web Projects/AutoLeap\" ls-files:*)",
+      "Bash(git -C '/d/New Files/Personal/Web Projects/AutoLeap' ls-files:*)",
+      "Bash(sh -c 'cd \"\"d:/New Files/Personal/Web Projects/AutoLeap\"\" && ls -la src')",
+      "Bash(ls -la \"d:\\\\New Files\\\\Personal\\\\Web Projects\\\\AutoLeap\\\\src\\\\lib\\\\database\"\" 2>&1 || echo \"Directory not found \")",
+      "Bash(npm run build:*)",
+      "Bash(npm install:*)",
+      "Bash(powershell -Command \"Resolve-DnsName glzlorvhnfpiebnfwvdl.supabase.co 2>&1 | Select-Object -First 3\")",
+      "Bash(find:*)",
+      "Bash(node -e \":*)"
+    ]
+  }
+}

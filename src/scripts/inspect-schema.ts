@@ -9,12 +9,7 @@ async function inspect() {
     const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
     // Query to get function definition
-    const { data, error } = await supabase.rpc('get_function_def', { func_name: 'match_faqs' })
-        .catch(async () => {
-            // Fallback: try raw SQL via a custom RPC if it exists, or just list tables?
-            // Actually, let's try to infer it by testing a query.
-            return { error: 'Could not inspect directly' };
-        });
+    const { data, error } = await supabase.rpc('get_function_def', { func_name: 'match_faqs' });
 
     // Since we probably don't have a 'get_function_def' RPC, 
     // let's try to just SELECT from the faq_documents and faq_embeddings to see columns.

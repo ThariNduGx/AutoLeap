@@ -76,6 +76,11 @@ export async function requestBudget(
   businessId: string,
   estimate: CostEstimate
 ): Promise<boolean> {
+  // Free-tier models (Gemini) have $0 cost — always approve without calling the DB
+  if (estimate.estimatedCost === 0) {
+    return true;
+  }
+
   const safetyMargin = estimate.estimatedCost * 1.2;
 
   console.log('[COST] Requesting budget:', {

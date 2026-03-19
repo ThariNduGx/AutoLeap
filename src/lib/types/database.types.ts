@@ -38,6 +38,99 @@ export interface Database {
           expires_at?: string;
         };
       };
+      businesses: {
+        Row: {
+          id: string;
+          name: string;
+          is_active: boolean;
+          user_id?: string | null;
+          telegram_bot_token?: string | null;
+          fb_page_id?: string | null;
+          fb_page_access_token?: string | null;
+          fb_page_name?: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          name: string;
+          is_active?: boolean;
+          user_id?: string | null;
+          telegram_bot_token?: string | null;
+          fb_page_id?: string | null;
+          fb_page_access_token?: string | null;
+          fb_page_name?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          name?: string;
+          is_active?: boolean;
+          user_id?: string | null;
+          telegram_bot_token?: string | null;
+          fb_page_id?: string | null;
+          fb_page_access_token?: string | null;
+          fb_page_name?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+      };
+      users: {
+        Row: {
+          id: string;
+          email: string;
+          password_hash: string;
+          name: string;
+          role: 'admin' | 'business';
+          business_id?: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          email: string;
+          password_hash: string;
+          name: string;
+          role?: 'admin' | 'business';
+          business_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          email?: string;
+          password_hash?: string;
+          name?: string;
+          role?: 'admin' | 'business';
+          business_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+      };
+      request_queue: {
+        Row: {
+          id: string;
+          business_id: string;
+          raw_payload: any;
+          status: 'pending' | 'processing' | 'completed' | 'failed';
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          business_id: string;
+          raw_payload: any;
+          status?: 'pending' | 'processing' | 'completed' | 'failed';
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          business_id?: string;
+          raw_payload?: any;
+          status?: 'pending' | 'processing' | 'completed' | 'failed';
+          created_at?: string;
+        };
+      };
       // ... other tables
     };
   };
