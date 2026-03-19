@@ -3,11 +3,17 @@
  * Handles sending messages back to users
  */
 
+export interface InlineKeyboardButton {
+  text: string;
+  callback_data: string;
+}
+
 interface TelegramMessage {
   chatId: string;
   text: string;
   replyToMessageId?: number;
   parseMode?: 'Markdown' | 'HTML';
+  inlineKeyboard?: InlineKeyboardButton[][];
 }
 
 interface TelegramResponse {
@@ -39,6 +45,10 @@ export async function sendTelegramMessage(
     // Don't use it for simulated messages
     if (message.replyToMessageId && message.replyToMessageId < 1000) {
       body.reply_to_message_id = message.replyToMessageId;
+    }
+
+    if (message.inlineKeyboard && message.inlineKeyboard.length > 0) {
+      body.reply_markup = { inline_keyboard: message.inlineKeyboard };
     }
 
     const response = await fetch(url, {
@@ -113,6 +123,70 @@ export function formatMarkdown(text: string): string {
   // Escape special Markdown characters except *, _, `, [
   return text
     .replace(/([\\#\-+=|{}!()])/g, '\\$1');
+}
+
+/**
+ * Send a message with an inline keyboard to a Telegram chat
+ */
+export async function sendTelegramMessageWithKeyboard(
+  botToken: string,
+  chatId: string,
+  text: string,
+  keyboard: InlineKeyboardButton[][]
+): Promise<boolean> {
+  return sendTelegramMessage(botToken, { chatId, text, inlineKeyboard: keyboard });
+}
+
+/**
+ * Answer a Telegram callback query (removes the loading spinner on the button)
+ */
+export async function answerCallbackQuery(
+  botToken: string,
+  callbackQueryId: string,
+  text?: string
+): Promise<void> {
+  const url = `https://api.telegram.org/bot${botToken}/answerCallbackQuery`;
+  try {
+    await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ callback_query_id: callbackQueryId, text }),
+    });
+  } catch (error) {
+    console.warn('[TELEGRAM] answerCallbackQuery failed:', error);
+  }
+}
+
+/**
+ * Send a direct notification to the business owner
+ */
+export async function sendOwnerNotification(
+  botToken: string,
+  ownerChatId: string,
+  message: string
+): Promise<boolean> {
+  return sendTelegramMessage(botToken, { chatId: ownerChatId, text: message });
+}
+
+/**
+ * Build a 2-column inline keyboard from a list of time slot strings
+ * callback_data format: "slot:{date}:{time}"
+ */
+export function buildSlotKeyboard(
+  slots: string[],
+  date: string
+): InlineKeyboardButton[][] {
+  const keyboard: InlineKeyboardButton[][] = [];
+  for (let i = 0; i < slots.length; i += 2) {
+    const row: InlineKeyboardButton[] = [
+      { text: slots[i], callback_data: `slot:${date}:${slots[i]}` },
+    ];
+    if (slots[i + 1]) {
+      row.push({ text: slots[i + 1], callback_data: `slot:${date}:${slots[i + 1]}` });
+    }
+    keyboard.push(row);
+  }
+  return keyboard;
 }
 
 /**

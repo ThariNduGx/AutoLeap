@@ -29,6 +29,50 @@ export async function POST(req: Request) {
     // 4. PARSE DATA
     const body = await req.json();
 
+    // Handle inline keyboard button presses (callback_query)
+    if (body.callback_query) {
+      const cq = body.callback_query;
+      const data: string = cq.data || '';
+
+      // Only handle slot selections
+      if (data.startsWith('slot:')) {
+        const [, date, time] = data.split(':');
+        const supabase = getSupabaseClient();
+
+        // Enqueue as a synthetic booking message
+        await (supabase.from('request_queue') as any).insert({
+          business_id: process.env.DEFAULT_BUSINESS_ID,
+          raw_payload: {
+            // Mimic a normal Telegram message payload
+            message: {
+              text: `slot:${date}:${time}`,
+              from: cq.from,
+              chat: cq.message?.chat,
+              message_id: cq.message?.message_id,
+            },
+          },
+          status: 'pending',
+        });
+
+        // Answer the callback to remove the loading spinner on the button
+        const botToken = process.env.TELEGRAM_BOT_TOKEN;
+        if (botToken) {
+          fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ callback_query_id: cq.id, text: `Selected: ${time}` }),
+          }).catch(() => {});
+        }
+
+        // Trigger queue processor
+        const baseUrl = process.env.NEXT_PUBLIC_BASE_URL;
+        const cronSecret = process.env.CRON_SECRET || 'dev-secret-change-in-production';
+        fetch(`${baseUrl}/api/cron/process-queue?key=${cronSecret}`).catch(() => {});
+      }
+
+      return new NextResponse('OK');
+    }
+
     // Ignore updates that aren't messages (like typing indicators)
     if (!body.message && !body.edited_message) {
       return new NextResponse('OK');

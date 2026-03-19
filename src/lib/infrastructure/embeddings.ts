@@ -144,7 +144,25 @@ export async function searchFAQs(
 
     console.log('[FAQ] ✅ Found', data?.length || 0, 'matches');
 
-    return data || [];
+    if (data && data.length > 0) {
+      return data;
+    }
+
+    // Hybrid fallback: keyword search when semantic returns nothing
+    console.log('[FAQ] Semantic miss — trying keyword fallback...');
+    const { data: kwData, error: kwError } = await (supabase.rpc as any)('search_faqs_keyword', {
+      p_business_id: businessId,
+      p_query: query,
+      p_limit: matchCount,
+    });
+
+    if (kwError) {
+      console.error('[FAQ] Keyword search failed:', kwError);
+      return [];
+    }
+
+    console.log('[FAQ] Keyword results:', kwData?.length || 0);
+    return kwData || [];
   } catch (error) {
     console.error('[FAQ] Search exception:', error);
     return [];

@@ -5,6 +5,7 @@ import { classifyIntent, selectModel } from './smart-router';
 import { estimateCost, requestBudget, calculateActualCost, commitCost } from '../infrastructure/cost-tracker';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { calendarToolsForGemini, executeCalendarTool } from './tools/calendar-tools';
+import type { InlineKeyboardButton } from '../infrastructure/telegram';
 
 interface QueueItem {
   id: string;
@@ -19,6 +20,7 @@ interface ProcessingResult {
   response?: string;
   error?: string;
   costIncurred: number;
+  keyboard?: InlineKeyboardButton[][];
 }
 
 interface Conversation {
@@ -110,7 +112,9 @@ async function processItem(item: QueueItem): Promise<void> {
 
   console.log(`[QUEUE] [${platform.toUpperCase()}] Message:`, message.text.substring(0, 50));
 
-  const intent = classifyIntent(message.text);
+  // Inline keyboard slot selections are always booking continuations
+  const isSlotCallback = message.text.startsWith('slot:');
+  const intent = isSlotCallback ? 'booking' : classifyIntent(message.text);
   const model = selectModel(intent);
 
   console.log('[QUEUE] Intent:', intent, '| Model:', model);
@@ -165,7 +169,12 @@ async function processItem(item: QueueItem): Promise<void> {
     if (platform === 'messenger') {
       await sendResponseToMessenger(item.raw_payload, result.response || 'Processed', item.business_id);
     } else {
-      await sendResponseToTelegram(item.raw_payload, result.response || 'Processed', item.business_id);
+      await sendResponseToTelegram(
+        item.raw_payload,
+        result.response || 'Processed',
+        item.business_id,
+        result.keyboard
+      );
     }
 
     console.log('[QUEUE] ✅ Response:', result.response?.substring(0, 50));
@@ -311,7 +320,8 @@ async function markFailed(itemId: string, error: string): Promise<void> {
 async function sendResponseToTelegram(
   payload: any,
   responseText: string,
-  businessId: string
+  businessId: string,
+  keyboard?: InlineKeyboardButton[][]
 ): Promise<void> {
   try {
     const { sendTelegramMessage, sendTypingAction } = await import('../infrastructure/telegram');
@@ -343,6 +353,7 @@ async function sendResponseToTelegram(
       text: responseText,
       replyToMessageId: messageId,
       parseMode: 'Markdown',
+      inlineKeyboard: keyboard,
     });
 
     if (!sent) {
@@ -410,9 +421,16 @@ async function handleGreeting(
   message: { text: string; userId: string; chatId: string },
   businessId: string
 ): Promise<ProcessingResult> {
+  const supabase = getSupabaseClient();
+  const { data: business } = await (supabase.from('businesses') as any)
+    .select('name')
+    .eq('id', businessId)
+    .single();
+
+  const name = business?.name || 'our service';
   return {
     success: true,
-    response: 'Hello! How can I help you today?',
+    response: `Hello! Welcome to *${name}*. How can I help you today?\n\nI can help you with:\n• Booking an appointment\n• Answering questions about our services\n• Checking your booking status`,
     costIncurred: 0,
   };
 }
@@ -514,7 +532,17 @@ async function handleBooking(
     const isFirstMessage = conversation.history.length === 0;
 
     let currentMessage = '';
-    if (isFirstMessage) {
+
+    // Handle slot selection from inline keyboard callback
+    if (message.text.startsWith('slot:')) {
+      const [, date, time] = message.text.split(':');
+      currentMessage = `Customer selected the time slot: ${date} at ${time}. ` +
+        `Now ask for their full name and phone number (10-digit Sri Lankan format like 0771234567) to confirm the booking. ` +
+        `State so far: ${JSON.stringify(conversation.state)}`;
+      // Pre-fill state with selected slot
+      conversation.state.selected_date = date;
+      conversation.state.selected_time = time;
+    } else if (isFirstMessage) {
       currentMessage = `You are a booking assistant for a Sri Lankan service business.
 
 Customer message: "${message.text}"
@@ -522,15 +550,15 @@ Customer message: "${message.text}"
 WORKFLOW:
 1. Extract info from message (service, date, time, name, phone)
 2. If you have a date, call get_available_slots to check availability
-3. If customer has picked a time and provided name+phone, call book_appointment
-4. If info is missing, ask politely (specify format: phone must be 10 digits like 0771234567)
+3. The system will show available slots as buttons — just ask the customer to pick one
+4. Once a slot is picked, ask for name and phone number
+5. Call book_appointment when you have: date, time, customer_name, customer_phone, service_type
 
 Current date: ${new Date().toISOString().split('T')[0]}
 Tomorrow: ${new Date(Date.now() + 86400000).toISOString().split('T')[0]}
 
 Start by checking availability if you can determine the date.`;
     } else {
-      // Continuing conversation
       currentMessage = `Customer's new message: "${message.text}"
 
 Continue helping them complete the booking. State: ${JSON.stringify(conversation.state)}`;
@@ -558,22 +586,36 @@ Continue helping them complete the booking. State: ${JSON.stringify(conversation
 
         const functionResponses = [];
 
-        for (const call of functionCalls) {
+        let pendingSlotKeyboard: InlineKeyboardButton[][] | undefined;
+
+      for (const call of functionCalls) {
           console.log(`[TOOL] Executing: ${call.name}`);
           console.log(`[TOOL] Arguments:`, JSON.stringify(call.args, null, 2));
 
-          const toolResult = await executeCalendarTool(
-            call.name,
-            call.args,
-            businessId
-          );
+          const toolArgs = { ...call.args } as any;
+
+          // Inject customer_chat_id so appointments can be looked up by chat later
+          if (call.name === 'book_appointment') {
+            toolArgs.customer_chat_id = message.chatId;
+          }
+
+          const toolResult = await executeCalendarTool(call.name, toolArgs, businessId);
 
           console.log(`[TOOL] Result:`, JSON.stringify(toolResult, null, 2));
 
-          // Update conversation state
+          // Build inline keyboard when slots are returned
+          if (call.name === 'get_available_slots' && toolResult.available_slots?.length > 0) {
+            const { buildSlotKeyboard } = await import('../infrastructure/telegram');
+            pendingSlotKeyboard = buildSlotKeyboard(toolResult.available_slots, toolArgs.date);
+            conversation.state.pending_slots = toolResult.available_slots;
+            conversation.state.pending_date = toolArgs.date;
+          }
+
+          // Update conversation state on successful booking
           if (call.name === 'book_appointment' && toolResult.success) {
             conversation.state.booked = true;
             conversation.state.appointment = toolResult;
+            conversation.state.pending_slots = undefined;
           }
 
           functionResponses.push({
@@ -601,26 +643,25 @@ Continue helping them complete the booking. State: ${JSON.stringify(conversation
 
         const finalText = nextResult.response.text();
 
-        // Save conversation
         await updateConversation(conversation.id, conversation.state, conversation.history);
 
-        const cost = 0;
+        const cost = calculateActualCost('gemini-flash-latest', totalTokens, 0);
         await commitCost(businessId, cost, 'gemini-flash-latest', totalTokens, 0);
 
         return {
           success: true,
           response: finalText,
           costIncurred: cost,
+          keyboard: pendingSlotKeyboard,
         };
       }
 
-      // No function calls - just text
+      // No function calls — just text
       const text = response.text();
 
-      // Save conversation
       await updateConversation(conversation.id, conversation.state, conversation.history);
 
-      const cost = 0;
+      const cost = calculateActualCost('gemini-flash-latest', totalTokens, 0);
       await commitCost(businessId, cost, 'gemini-flash-latest', totalTokens, 0);
 
       return {
@@ -631,10 +672,13 @@ Continue helping them complete the booking. State: ${JSON.stringify(conversation
     }
 
     console.warn('[BOOKING] Max iterations reached');
+    await updateConversation(conversation.id, conversation.state, conversation.history);
+    const cost = calculateActualCost('gemini-flash-latest', totalTokens, 0);
+    await commitCost(businessId, cost, 'gemini-flash-latest', totalTokens, 0);
     return {
       success: true,
       response: 'To complete your booking, please provide all details in one message: service, date, time, your name, and phone (10 digits).',
-      costIncurred: 0,
+      costIncurred: cost,
     };
 
   } catch (error: any) {
@@ -652,9 +696,40 @@ async function handleStatus(
   message: { text: string; userId: string; chatId: string },
   businessId: string
 ): Promise<ProcessingResult> {
+  const supabase = getSupabaseClient();
+  const today = new Date().toISOString().split('T')[0];
+
+  // Look up upcoming appointments linked to this chat session
+  const { data: appointments } = await (supabase
+    .from('appointments') as any)
+    .select('customer_name, service_type, appointment_date, appointment_time, status')
+    .eq('business_id', businessId)
+    .eq('customer_chat_id', message.chatId)
+    .gte('appointment_date', today)
+    .eq('status', 'confirmed')
+    .order('appointment_date', { ascending: true })
+    .order('appointment_time', { ascending: true })
+    .limit(1);
+
+  if (!appointments || appointments.length === 0) {
+    return {
+      success: true,
+      response: "I couldn't find any upcoming appointments linked to this chat. If you have a booking, please share your phone number and I'll look it up for you.",
+      costIncurred: 0,
+    };
+  }
+
+  const appt = appointments[0];
+  const dateStr = new Date(`${appt.appointment_date}T00:00:00`).toLocaleDateString('en-LK', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
+
   return {
     success: true,
-    response: 'Status handler - coming soon',
+    response: `Your next appointment:\n\n*${appt.service_type}*\n📅 ${dateStr}\n🕐 ${appt.appointment_time}\n\nStatus: ${appt.status === 'confirmed' ? '✅ Confirmed' : appt.status}`,
     costIncurred: 0,
   };
 }
@@ -664,9 +739,38 @@ async function handleComplaint(
   businessId: string,
   model: string
 ): Promise<ProcessingResult> {
+  const supabase = getSupabaseClient();
+
+  // Mark the active conversation as a complaint
+  await (supabase.from('conversations') as any)
+    .update({ intent: 'complaint', status: 'escalated' })
+    .eq('business_id', businessId)
+    .eq('customer_chat_id', message.chatId);
+
+  // Notify the owner via Telegram DM if configured
+  const { data: business } = await (supabase.from('businesses') as any)
+    .select('name, telegram_bot_token, owner_telegram_chat_id')
+    .eq('id', businessId)
+    .single();
+
+  if (business?.telegram_bot_token && business?.owner_telegram_chat_id) {
+    const { sendOwnerNotification } = await import('../infrastructure/telegram');
+    const ownerMessage =
+      `⚠️ *Complaint received*\n\n` +
+      `Customer (chat: ${message.chatId}) reported:\n_"${message.text}"_\n\n` +
+      `Please follow up as soon as possible.`;
+    await sendOwnerNotification(
+      business.telegram_bot_token,
+      business.owner_telegram_chat_id,
+      ownerMessage
+    );
+    console.log('[COMPLAINT] ✅ Owner notified via Telegram DM');
+  }
+
   return {
     success: true,
-    response: 'Your complaint has been escalated to our team. We will contact you shortly.',
+    response:
+      "I'm sorry to hear you're having an issue. Your complaint has been escalated to the team and someone will reach out to you shortly. We apologize for any inconvenience.",
     costIncurred: 0,
   };
 }
@@ -676,9 +780,44 @@ async function handleUnknown(
   businessId: string,
   model: string
 ): Promise<ProcessingResult> {
-  return {
-    success: true,
-    response: 'I apologize, but I did not understand your request. Could you please rephrase?',
-    costIncurred: 0,
-  };
+  // Try semantic search first — the intent classifier may have missed an FAQ
+  const { searchFAQs } = await import('../infrastructure/embeddings');
+  const hits = await searchFAQs(businessId, message.text, 0.5, 3);
+
+  if (hits.length > 0) {
+    // Re-use the FAQ handler path
+    return handleFAQ(message, businessId, model);
+  }
+
+  // Fallback: ask Gemini to respond helpfully
+  try {
+    const { llm } = await import('../infrastructure/llm-adapter');
+    const prompt =
+      `You are a helpful assistant for a local Sri Lankan service business. ` +
+      `The customer sent a message that doesn't clearly match booking or FAQ topics.\n\n` +
+      `Customer message: "${message.text}"\n\n` +
+      `Respond helpfully in 1-2 sentences. If unsure, let them know you can help with ` +
+      `booking appointments and answering service questions, and ask them to clarify.`;
+
+    const response = await llm.chat.completions.create({
+      model: model as any,
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 100,
+      temperature: 0.5,
+    });
+
+    const text = response.choices[0].message.content || "I'm not sure I understood that. I can help you book an appointment or answer questions about our services — please let me know what you need!";
+    const tokensIn = response.usage?.prompt_tokens || 0;
+    const tokensOut = response.usage?.completion_tokens || 0;
+    const cost = calculateActualCost(model as any, tokensIn, tokensOut);
+    await commitCost(businessId, cost, model as any, tokensIn, tokensOut);
+
+    return { success: true, response: text, costIncurred: cost };
+  } catch {
+    return {
+      success: true,
+      response: "I'm not sure I understood that. I can help you book an appointment or answer questions about our services — please let me know what you need!",
+      costIncurred: 0,
+    };
+  }
 }

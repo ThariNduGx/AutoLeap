@@ -9,12 +9,16 @@ interface BusinessSettings {
     telegram_bot_token: string | null;
     fb_page_id: string | null;
     fb_page_name: string | null;
+    owner_telegram_chat_id: string | null;
 }
 
 export default function SettingsPage() {
     const [business, setBusiness] = useState<BusinessSettings | null>(null);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
+    const [ownerChatId, setOwnerChatId] = useState('');
+    const [savingChatId, setSavingChatId] = useState(false);
+    const [chatIdSaved, setChatIdSaved] = useState(false);
 
     useEffect(() => {
         fetchBusinessSettings();
@@ -26,11 +30,30 @@ export default function SettingsPage() {
             const data = await res.json();
             if (data.success) {
                 setBusiness(data.business);
+                setOwnerChatId(data.business.owner_telegram_chat_id || '');
             }
         } catch (error) {
             console.error('Failed to fetch settings:', error);
         } finally {
             setLoading(false);
+        }
+    }
+
+    async function handleSaveOwnerChatId() {
+        setSavingChatId(true);
+        setChatIdSaved(false);
+        try {
+            const res = await fetch('/api/business/settings', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ owner_telegram_chat_id: ownerChatId }),
+            });
+            if (res.ok) {
+                setChatIdSaved(true);
+                setTimeout(() => setChatIdSaved(false), 3000);
+            }
+        } finally {
+            setSavingChatId(false);
         }
     }
 
@@ -188,6 +211,36 @@ export default function SettingsPage() {
                                 </div>
                             )}
                         </div>
+
+                        {/* Owner Telegram notification chat ID */}
+                        {business?.telegram_bot_token && (
+                            <div className="p-4 border border-indigo-100 bg-indigo-50 rounded-xl">
+                                <h4 className="text-sm font-semibold text-gray-900 mb-1">Receive Complaint Alerts</h4>
+                                <p className="text-xs text-gray-500 mb-3">
+                                    Enter your personal Telegram Chat ID so the bot can DM you when a complaint arrives.{' '}
+                                    <a href="https://t.me/userinfobot" target="_blank" rel="noopener noreferrer" className="text-indigo-600 underline">
+                                        Find your Chat ID via @userinfobot
+                                    </a>
+                                </p>
+                                <div className="flex gap-2">
+                                    <input
+                                        type="text"
+                                        value={ownerChatId}
+                                        onChange={e => setOwnerChatId(e.target.value)}
+                                        placeholder="e.g. 123456789"
+                                        className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-500"
+                                    />
+                                    <button
+                                        onClick={handleSaveOwnerChatId}
+                                        disabled={savingChatId || !ownerChatId}
+                                        className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg flex items-center gap-2 disabled:opacity-50"
+                                    >
+                                        {savingChatId ? <Loader2 size={14} className="animate-spin" /> : chatIdSaved ? <CheckCircle2 size={14} /> : <Save size={14} />}
+                                        {chatIdSaved ? 'Saved!' : 'Save'}
+                                    </button>
+                                </div>
+                            </div>
+                        )}
 
                         {/* Facebook Messenger Integration */}
                         <div className="p-4 border border-gray-200 rounded-xl">

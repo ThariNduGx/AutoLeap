@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { Plus, Search, Trash2, Edit2, Tag, Loader2 } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { Plus, Trash2, Tag, Loader2, Upload, FileText, CheckCircle2, AlertCircle } from 'lucide-react';
 
 export default function FAQsPage() {
     const [faqs, setFaqs] = useState<any[]>([]);
@@ -9,6 +9,11 @@ export default function FAQsPage() {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [newFaq, setNewFaq] = useState({ question: '', answer: '', category: 'general' });
     const [saving, setSaving] = useState(false);
+    const [uploadState, setUploadState] = useState<
+        'idle' | 'uploading' | 'success' | 'error'
+    >('idle');
+    const [uploadResult, setUploadResult] = useState<{ imported: number; skipped: number } | null>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
 
     useEffect(() => {
         fetchFaqs();
@@ -47,6 +52,34 @@ export default function FAQsPage() {
         }
     }
 
+    async function handleCSVUpload(e: React.ChangeEvent<HTMLInputElement>) {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        setUploadState('uploading');
+        setUploadResult(null);
+
+        try {
+            const form = new FormData();
+            form.append('file', file);
+            const res = await fetch('/api/faqs/bulk', { method: 'POST', body: form });
+            const data = await res.json();
+
+            if (res.ok && data.success) {
+                setUploadState('success');
+                setUploadResult({ imported: data.imported, skipped: data.skipped });
+                fetchFaqs();
+            } else {
+                setUploadState('error');
+            }
+        } catch {
+            setUploadState('error');
+        } finally {
+            // Reset file input so the same file can be re-selected
+            if (fileInputRef.current) fileInputRef.current.value = '';
+        }
+    }
+
     async function handleDelete(id: string) {
         if (!confirm('Are you sure you want to delete this FAQ?')) return;
         try {
@@ -64,13 +97,51 @@ export default function FAQsPage() {
                     <h1 className="text-2xl font-bold text-gray-900">FAQ Management</h1>
                     <p className="text-gray-500 mt-1">Train your AI agent to answer customer questions.</p>
                 </div>
-                <button
-                    onClick={() => setIsModalOpen(true)}
-                    className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-medium transition-colors"
-                >
-                    <Plus size={20} />
-                    Add FAQ
-                </button>
+                <div className="flex items-center gap-3">
+                    {/* CSV upload status */}
+                    {uploadState === 'success' && uploadResult && (
+                        <span className="flex items-center gap-1 text-sm text-green-700 bg-green-50 px-3 py-2 rounded-lg border border-green-200">
+                            <CheckCircle2 size={14} />
+                            {uploadResult.imported} imported, {uploadResult.skipped} skipped
+                        </span>
+                    )}
+                    {uploadState === 'error' && (
+                        <span className="flex items-center gap-1 text-sm text-red-700 bg-red-50 px-3 py-2 rounded-lg border border-red-200">
+                            <AlertCircle size={14} />
+                            Upload failed
+                        </span>
+                    )}
+
+                    {/* Hidden file input */}
+                    <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept=".csv"
+                        className="hidden"
+                        onChange={handleCSVUpload}
+                    />
+
+                    <button
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={uploadState === 'uploading'}
+                        className="border border-gray-300 hover:border-indigo-400 hover:bg-indigo-50 text-gray-700 px-4 py-2 rounded-lg flex items-center gap-2 font-medium transition-colors disabled:opacity-50"
+                        title="Upload CSV with columns: question, answer, category"
+                    >
+                        {uploadState === 'uploading'
+                            ? <Loader2 size={16} className="animate-spin" />
+                            : <Upload size={16} />
+                        }
+                        {uploadState === 'uploading' ? 'Uploading...' : 'Import CSV'}
+                    </button>
+
+                    <button
+                        onClick={() => setIsModalOpen(true)}
+                        className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-medium transition-colors"
+                    >
+                        <Plus size={20} />
+                        Add FAQ
+                    </button>
+                </div>
             </div>
 
             {loading ? (
@@ -79,7 +150,12 @@ export default function FAQsPage() {
                 <div className="grid grid-cols-1 gap-4">
                     {faqs.length === 0 && (
                         <div className="text-center py-12 text-gray-400 bg-white rounded-xl border border-dashed border-gray-300">
-                            No FAQs yet. Add one to train your bot!
+                            <FileText size={32} className="mx-auto mb-3 text-gray-300" />
+                            <p className="font-medium text-gray-500">No FAQs yet</p>
+                            <p className="text-sm mt-1">Add one manually or import a CSV file.</p>
+                            <p className="text-xs mt-3 text-gray-400">
+                                CSV format: <code className="bg-gray-100 px-1 rounded">question,answer,category</code>
+                            </p>
                         </div>
                     )}
                     {faqs.map((faq) => (

@@ -102,7 +102,7 @@ export async function executeCalendarTool(
     }
 
     case 'book_appointment': {
-      const { date, time, customer_name, customer_phone, service_type, duration = 60 } = args;
+      const { date, time, customer_name, customer_phone, service_type, duration = 60, customer_chat_id } = args;
 
       // Validate phone number (Sri Lankan format)
       const phoneRegex = /^0\d{9}$/;
@@ -150,6 +150,7 @@ export async function executeCalendarTool(
           duration_minutes: duration,
           google_event_id: result.eventId,
           status: 'confirmed',
+          customer_chat_id: customer_chat_id || null,
         });
 
         console.log('[TOOL] ✅ Appointment booked successfully');
