@@ -1,21 +1,26 @@
-
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseClient } from '@/lib/infrastructure/supabase';
+import { getSession, hasRole } from '@/lib/auth/session';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET(req: Request) {
-    const { searchParams } = new URL(req.url);
-    const businessId = searchParams.get('businessId') || process.env.DEFAULT_BUSINESS_ID;
-    const days = parseInt(searchParams.get('days') || '30');
+export async function GET(req: NextRequest) {
+    const session = await getSession(req);
 
-    if (!businessId) {
-        return NextResponse.json({ error: 'Business ID required' }, { status: 400 });
+    if (!session || !hasRole(session, 'business')) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
     }
 
-    const supabase = getSupabaseClient();
+    const businessId = session.businessId;
+    if (!businessId) {
+        return NextResponse.json({ error: 'No business associated with this account' }, { status: 400 });
+    }
 
-    // Calculate start date
+    const { searchParams } = new URL(req.url);
+    // Clamp days between 1 and 90 to prevent abuse
+    const days = Math.min(90, Math.max(1, parseInt(searchParams.get('days') || '30') || 30));
+
+    const supabase = getSupabaseClient();
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - days);
     const startDateStr = startDate.toISOString().split('T')[0];
@@ -29,32 +34,25 @@ export async function GET(req: Request) {
             .order('date', { ascending: true });
 
         if (error) {
-            console.error('[API] Failed to fetch costs:', error);
             return NextResponse.json({ error: 'Database error' }, { status: 500 });
         }
 
-        // Calculate totals
-        const totalCost = data?.reduce((sum: number, day: any) => sum + day.total_cost, 0) || 0;
-        const totalQueries = data?.reduce((sum: number, day: any) => sum + day.query_count, 0) || 0;
-        const totalHits = data?.reduce((sum: number, day: any) => sum + day.cache_hits, 0) || 0;
-
-        // Avoid division by zero
-        const hitRate = totalQueries > 0 ? (totalHits / totalQueries) : 0;
-        const avgCostPerQuery = totalQueries > 0 ? (totalCost / totalQueries) : 0;
+        const rows = data || [];
+        const totalCost = rows.reduce((sum: number, d: any) => sum + (d.total_cost || 0), 0);
+        const totalQueries = rows.reduce((sum: number, d: any) => sum + (d.query_count || 0), 0);
+        const totalHits = rows.reduce((sum: number, d: any) => sum + (d.cache_hits || 0), 0);
 
         return NextResponse.json({
-            daily: data || [],
+            daily: rows,
             summary: {
                 totalCost,
-                avgDailyCost: totalCost / days,
-                projectedMonthly: (totalCost / days) * 30,
-                cacheHitRate: hitRate,
-                avgCostPerQuery
-            }
+                avgDailyCost: days > 0 ? totalCost / days : 0,
+                projectedMonthly: days > 0 ? (totalCost / days) * 30 : 0,
+                cacheHitRate: totalQueries > 0 ? totalHits / totalQueries : 0,
+                avgCostPerQuery: totalQueries > 0 ? totalCost / totalQueries : 0,
+            },
         });
-
-    } catch (error) {
-        console.error('[API] Exception:', error);
+    } catch {
         return NextResponse.json({ error: 'Internal error' }, { status: 500 });
     }
 }

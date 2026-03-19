@@ -16,7 +16,7 @@ function getActiveProvider(): Provider {
   if (process.env.GOOGLE_API_KEY) {
     return 'gemini';
   }
-  throw new Error('No AI provider configured');
+  throw new Error('No AI provider configured. Set GOOGLE_API_KEY, OPENAI_API_KEY, or OPENROUTER_API_KEY.');
 }
 
 // OpenAI Client (for production)
@@ -44,7 +44,7 @@ const getGeminiClient = () => {
 
 // Unified interface for both providers
 export const llm = {
-  activeProvider: getActiveProvider(),
+  get activeProvider() { return getActiveProvider(); },
 
   // Chat completions (unified)
   chat: {
@@ -156,4 +156,4 @@ export function getProviderInfo() {
   };
 }
 
-console.log('[LLM] Active provider:', getActiveProvider());
+// Note: provider is resolved lazily on first use, not at module load time

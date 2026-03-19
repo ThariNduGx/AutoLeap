@@ -38,20 +38,14 @@ export async function POST(request: NextRequest) {
       .single()) as { data: User | null; error: any };
 
     if (queryError || !user) {
-      console.log('[LOGIN] User not found:', email, 'Error:', queryError);
       return NextResponse.json(
         { error: "Invalid email or password" },
         { status: 401 }
       );
     }
 
-    console.log('[LOGIN] User found:', email);
-    console.log('[LOGIN] Password hash exists:', !!user.password_hash);
-
     // Verify password
     const isPasswordValid = await bcrypt.compare(password, user.password_hash);
-
-    console.log('[LOGIN] Password validation result:', isPasswordValid);
 
     if (!isPasswordValid) {
       return NextResponse.json(

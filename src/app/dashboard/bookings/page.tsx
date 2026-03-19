@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from 'react';
 import { Calendar, Clock, Phone, CheckCircle, XCircle } from 'lucide-react';
-import { format } from 'date-fns';
 
 export default function BookingsPage() {
     const [bookings, setBookings] = useState<any[]>([]);
@@ -90,11 +89,11 @@ export default function BookingsPage() {
                                             <div className="flex flex-col gap-1">
                                                 <span className="text-sm text-gray-900 flex items-center gap-1.5">
                                                     <Calendar size={14} className="text-gray-400" />
-                                                    {booking.start_time ? format(new Date(booking.start_time), 'yyyy-MM-dd') : '-'}
+                                                    {booking.appointment_date ?? '-'}
                                                 </span>
                                                 <span className="text-xs text-gray-500 flex items-center gap-1.5">
                                                     <Clock size={14} className="text-gray-400" />
-                                                    {booking.start_time ? format(new Date(booking.start_time), 'HH:mm') : '-'}
+                                                    {booking.appointment_time ?? '-'}
                                                 </span>
                                             </div>
                                         </td>

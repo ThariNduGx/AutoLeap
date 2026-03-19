@@ -17,7 +17,10 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const authHeader = req.headers.get('authorization');
     const queryKey = searchParams.get('key');
-    const cronSecret = process.env.CRON_SECRET || 'dev-secret-change-in-production';
+    const cronSecret = process.env.CRON_SECRET;
+    if (!cronSecret) {
+      return new NextResponse('Server misconfiguration: CRON_SECRET not set', { status: 500 });
+    }
 
     const isValidHeader = authHeader === `Bearer ${cronSecret}`;
     const isValidQuery = queryKey === cronSecret;

@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
         // Get business info for this user
         const { data: business, error } = await (supabase
             .from('businesses') as any)
-            .select('id, name, telegram_bot_token, fb_page_id, fb_page_name, owner_telegram_chat_id')
+            .select('id, name, telegram_bot_token, fb_page_id, fb_page_name, owner_telegram_chat_id, google_calendar_token, google_calendar_email')
             .eq('id', session.businessId)
             .single();
 
@@ -38,6 +38,8 @@ export async function GET(request: NextRequest) {
                 fb_page_id: business.fb_page_id,
                 fb_page_name: business.fb_page_name,
                 owner_telegram_chat_id: business.owner_telegram_chat_id,
+                has_google_calendar: !!business.google_calendar_token,
+                google_calendar_email: business.google_calendar_email || null,
             },
         });
 
@@ -61,7 +63,7 @@ export async function PATCH(request: NextRequest) {
         }
 
         const body = await request.json();
-        const allowed = ['owner_telegram_chat_id'] as const;
+        const allowed = ['owner_telegram_chat_id', 'name', 'phone'] as const;
 
         // Only pick allowed fields from the request body
         const updates: Record<string, unknown> = {};
@@ -69,6 +71,12 @@ export async function PATCH(request: NextRequest) {
             if (key in body) {
                 updates[key] = body[key];
             }
+        }
+
+        // Handle Google Calendar disconnect
+        if (body.disconnect_google_calendar === true) {
+            updates.google_calendar_token = null;
+            updates.google_calendar_email = null;
         }
 
         if (Object.keys(updates).length === 0) {

@@ -6,9 +6,11 @@
 import { NextRequest } from 'next/server';
 import { SignJWT, jwtVerify } from 'jose';
 
-const JWT_SECRET = new TextEncoder().encode(
-  process.env.JWT_SECRET || 'your-secret-key-change-in-production-minimum-32-chars'
-);
+const rawSecret = process.env.JWT_SECRET;
+if (!rawSecret) {
+  throw new Error('FATAL: JWT_SECRET environment variable is not set');
+}
+const JWT_SECRET = new TextEncoder().encode(rawSecret);
 
 const JWT_EXPIRY = '7d'; // 7 days
 

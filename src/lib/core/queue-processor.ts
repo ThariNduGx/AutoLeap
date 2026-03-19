@@ -115,6 +115,14 @@ async function processItem(item: QueueItem): Promise<void> {
   // Inline keyboard slot selections are always booking continuations
   const isSlotCallback = message.text.startsWith('slot:');
   const intent = isSlotCallback ? 'booking' : classifyIntent(message.text);
+
+  // Skip AI if this conversation has been handed to a human
+  const activeConv = await getActiveConversation(item.business_id, message.chatId);
+  if (activeConv && (activeConv as any).status === 'human') {
+    console.log('[QUEUE] Conversation is in human mode — skipping AI');
+    await markCompleted(item.id, 'human_mode');
+    return;
+  }
   const model = selectModel(intent);
 
   console.log('[QUEUE] Intent:', intent, '| Model:', model);
@@ -250,8 +258,11 @@ async function getOrCreateConversation(
   return created as any as Conversation;
 }
 
+/** Keep only the last N history entries to bound context window size */
+const MAX_HISTORY_ENTRIES = 20;
+
 /**
- * Update conversation
+ * Update conversation (trims history to prevent unbounded growth)
  */
 async function updateConversation(
   conversationId: string,
@@ -260,15 +271,41 @@ async function updateConversation(
 ): Promise<void> {
   const supabase = getSupabaseClient();
 
+  const trimmed = history.length > MAX_HISTORY_ENTRIES
+    ? history.slice(history.length - MAX_HISTORY_ENTRIES)
+    : history;
+
   await (supabase
     .from('conversations') as any)
     .update({
       state,
-      history,
+      history: trimmed,
       last_message_at: new Date().toISOString(),
       expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
     })
     .eq('id', conversationId);
+}
+
+/** Log a booking attempt for TCR metric tracking (§7.2) */
+async function logBookingAttempt(
+  businessId: string,
+  conversationId: string,
+  chatId: string,
+  platform: string,
+  success: boolean,
+  turns: number,
+  failureReason?: string
+): Promise<void> {
+  const supabase = getSupabaseClient();
+  await (supabase.from('booking_attempts') as any).insert({
+    business_id: businessId,
+    conversation_id: conversationId,
+    customer_chat_id: chatId,
+    platform,
+    success,
+    turns_taken: turns,
+    failure_reason: failureReason || null,
+  });
 }
 
 
@@ -430,7 +467,8 @@ async function handleGreeting(
   const name = business?.name || 'our service';
   return {
     success: true,
-    response: `Hello! Welcome to *${name}*. How can I help you today?\n\nI can help you with:\n• Booking an appointment\n• Answering questions about our services\n• Checking your booking status`,
+    // §8.3 ethics requirement: disclose AI on first message
+    response: `Hello! Welcome to *${name}*.\n\n_You are chatting with AutoLeap AI — an automated assistant. A human is available if needed._\n\nHow can I help you today?\n\n• Book an appointment\n• Answer questions about our services\n• Check your booking status`,
     costIncurred: 0,
   };
 }
@@ -611,11 +649,15 @@ Continue helping them complete the booking. State: ${JSON.stringify(conversation
             conversation.state.pending_date = toolArgs.date;
           }
 
-          // Update conversation state on successful booking
+          // Update conversation state on successful booking + log TCR
           if (call.name === 'book_appointment' && toolResult.success) {
             conversation.state.booked = true;
             conversation.state.appointment = toolResult;
             conversation.state.pending_slots = undefined;
+            await logBookingAttempt(businessId, conversation.id, message.chatId, 'telegram', true, iterations);
+          }
+          if (call.name === 'book_appointment' && !toolResult.success) {
+            await logBookingAttempt(businessId, conversation.id, message.chatId, 'telegram', false, iterations, toolResult.error);
           }
 
           functionResponses.push({
@@ -671,13 +713,29 @@ Continue helping them complete the booking. State: ${JSON.stringify(conversation
       };
     }
 
-    console.warn('[BOOKING] Max iterations reached');
+    console.warn('[BOOKING] Max iterations reached — escalating to owner');
     await updateConversation(conversation.id, conversation.state, conversation.history);
+    await logBookingAttempt(businessId, conversation.id, message.chatId, 'telegram', false, totalTokens, 'max_iterations');
+
+    // Notify owner
+    const { data: biz } = await (getSupabaseClient().from('businesses') as any)
+      .select('telegram_bot_token, owner_telegram_chat_id')
+      .eq('id', businessId)
+      .single();
+    if (biz?.telegram_bot_token && biz?.owner_telegram_chat_id) {
+      const { sendOwnerNotification } = await import('../infrastructure/telegram');
+      await sendOwnerNotification(
+        biz.telegram_bot_token,
+        biz.owner_telegram_chat_id,
+        `⚠️ *Booking could not be completed*\n\nCustomer (chat: ${message.chatId}) could not finish booking after ${maxIterations} attempts. Please follow up manually.`
+      );
+    }
+
     const cost = calculateActualCost('gemini-flash-latest', totalTokens, 0);
     await commitCost(businessId, cost, 'gemini-flash-latest', totalTokens, 0);
     return {
       success: true,
-      response: 'To complete your booking, please provide all details in one message: service, date, time, your name, and phone (10 digits).',
+      response: 'I\'m having trouble completing your booking. Our team has been notified and will reach out shortly. Sorry for the inconvenience!',
       costIncurred: cost,
     };
 
@@ -708,7 +766,7 @@ async function handleStatus(
     .gte('appointment_date', today)
     .eq('status', 'confirmed')
     .order('appointment_date', { ascending: true })
-    .order('appointment_time', { ascending: true })
+    .order('appointment_time', { ascending: true })  // Fix: explicit asc on time
     .limit(1);
 
   if (!appointments || appointments.length === 0) {
