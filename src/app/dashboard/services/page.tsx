@@ -19,6 +19,8 @@ interface Service {
     name: string;
     description: string | null;
     duration_minutes: number;
+    buffer_minutes: number;
+    min_advance_hours: number;
     price: number | null;
     currency: string;
     tiers: Tier[];
@@ -32,6 +34,8 @@ const EMPTY_FORM = {
     name: '',
     description: '',
     duration_minutes: '60',
+    buffer_minutes: '0',
+    min_advance_hours: '0',
     currency: 'LKR',
 };
 
@@ -84,6 +88,8 @@ export default function ServicesPage() {
             name: svc.name,
             description: svc.description ?? '',
             duration_minutes: String(svc.duration_minutes),
+            buffer_minutes: String(svc.buffer_minutes ?? 0),
+            min_advance_hours: String(svc.min_advance_hours ?? 0),
             currency: svc.currency || 'LKR',
         });
         setTiers(svc.tiers ? svc.tiers.map(t => ({ ...t })) : []);
@@ -146,10 +152,15 @@ export default function ServicesPage() {
                 return tier;
             });
 
-            const body = {
+            const bufferMinutes = parseInt(form.buffer_minutes) || 0;
+        const minAdvanceHours = parseInt(form.min_advance_hours) || 0;
+
+        const body = {
                 name,
                 description: form.description.trim() || null,
                 duration_minutes: duration,
+                buffer_minutes: bufferMinutes,
+                min_advance_hours: minAdvanceHours,
                 currency: form.currency,
                 tiers: cleanTiers,
             };
@@ -273,6 +284,32 @@ export default function ServicesPage() {
                                 >
                                     {CURRENCIES.map(c => <option key={c}>{c}</option>)}
                                 </select>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    Buffer After Appointment (min)
+                                </label>
+                                <input
+                                    type="number"
+                                    value={form.buffer_minutes}
+                                    onChange={e => setForm(f => ({ ...f, buffer_minutes: e.target.value }))}
+                                    min={0} max={120} step={5}
+                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg text-gray-900 outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
+                                />
+                                <p className="text-xs text-gray-400 mt-1">Prep/cleanup gap before next booking</p>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    Min. Advance Notice (hours)
+                                </label>
+                                <input
+                                    type="number"
+                                    value={form.min_advance_hours}
+                                    onChange={e => setForm(f => ({ ...f, min_advance_hours: e.target.value }))}
+                                    min={0} max={168} step={1}
+                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg text-gray-900 outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
+                                />
+                                <p className="text-xs text-gray-400 mt-1">Earliest slot offered = now + this many hours</p>
                             </div>
                         </div>
 
@@ -462,6 +499,12 @@ function ServiceCard({
                         <span className="flex items-center gap-1 text-xs text-gray-500">
                             <Clock size={11} /> {svc.duration_minutes} min
                         </span>
+                        {(svc.buffer_minutes ?? 0) > 0 && (
+                            <span className="text-xs text-gray-400">+{svc.buffer_minutes}min buffer</span>
+                        )}
+                        {(svc.min_advance_hours ?? 0) > 0 && (
+                            <span className="text-xs text-gray-400">{svc.min_advance_hours}h notice req.</span>
+                        )}
                         {priceRange() && (
                             <span className="text-xs font-semibold text-indigo-700">{priceRange()}</span>
                         )}

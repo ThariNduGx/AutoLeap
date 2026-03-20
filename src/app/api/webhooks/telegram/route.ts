@@ -91,6 +91,55 @@ export async function POST(req: Request) {
         return new NextResponse('OK', { status: 200 });
       }
 
+      // ── Review rating from post-appointment request ───────────────────────
+      if (data.startsWith('review:')) {
+        const [, apptId, ratingStr] = data.split(':');
+        const rating = parseInt(ratingStr);
+
+        if (apptId && rating >= 1 && rating <= 5) {
+          const chatId = cq.message?.chat?.id || cq.from?.id;
+          // Save the review
+          await (supabase.from('reviews') as any).insert({
+            business_id:      businessId,
+            appointment_id:   apptId,
+            customer_chat_id: String(chatId),
+            platform:         'telegram',
+            rating,
+          }).catch(() => {});
+
+          // Ack + remove buttons
+          fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ callback_query_id: cq.id, text: 'Thank you for your feedback! ⭐' }),
+          }).catch(() => {});
+
+          if (cq.message?.message_id && chatId) {
+            fetch(`https://api.telegram.org/bot${botToken}/editMessageReplyMarkup`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                chat_id: chatId,
+                message_id: cq.message.message_id,
+                reply_markup: { inline_keyboard: [] },
+              }),
+            }).catch(() => {});
+
+            const stars = '⭐'.repeat(rating);
+            fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                chat_id: chatId,
+                text: `Thank you, ${cq.from?.first_name || 'valued customer'}! You rated us ${stars} (${rating}/5). We appreciate your feedback!`,
+              }),
+            }).catch(() => {});
+          }
+        }
+
+        return new NextResponse('OK', { status: 200 });
+      }
+
       if (data.startsWith('slot:')) {
         const parts = data.split(':');
         const date = parts[1];

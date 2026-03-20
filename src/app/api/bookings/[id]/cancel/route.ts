@@ -46,10 +46,10 @@ export async function POST(
 
     // Update DB status
     const { error: updateError } = await (supabase
-        .from('appointments')
+        .from('appointments') as any)
         .update({ status: 'cancelled' })
         .eq('id', id)
-        .eq('business_id', businessId) as any);
+        .eq('business_id', businessId);
 
     if (updateError) {
         return NextResponse.json({ error: 'Failed to cancel appointment' }, { status: 500 });

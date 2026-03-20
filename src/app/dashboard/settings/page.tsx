@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import {
     Building2, MessageSquare, Facebook, User, Shield, Save, Loader2,
     CheckCircle2, XCircle, X, Eye, EyeOff, Calendar, Clock, Globe,
-    AlertTriangle, DollarSign, TimerOff,
+    AlertTriangle, DollarSign, TimerOff, Bot, Ban, Bell, Plus, Trash2,
 } from 'lucide-react';
 
 // IANA timezone list (subset — most common zones)
@@ -149,6 +149,27 @@ export default function SettingsPage() {
     const [savingBudget, setSavingBudget] = useState(false);
     const [budgetSaved, setBudgetSaved] = useState(false);
 
+    // Bot persona (C2)
+    const [botName, setBotName]       = useState('Assistant');
+    const [botGreeting, setBotGreeting] = useState('');
+    const [botTone, setBotTone]       = useState('friendly');
+    const [savingBot, setSavingBot]   = useState(false);
+    const [botSaved, setBotSaved]     = useState(false);
+
+    // Reminder schedule (B6)
+    const [reminderHours, setReminderHours]   = useState<number[]>([24, 1]);
+    const [reminderInput, setReminderInput]   = useState('');
+    const [savingReminders, setSavingReminders] = useState(false);
+    const [remindersSaved, setRemindersSaved]   = useState(false);
+
+    // Blackout dates (B1)
+    interface Blackout { id: string; date: string; label: string; repeat_annually: boolean; }
+    const [blackouts, setBlackouts]     = useState<Blackout[]>([]);
+    const [blackoutDate, setBlackoutDate]   = useState('');
+    const [blackoutLabel, setBlackoutLabel] = useState('Closed');
+    const [blackoutRepeat, setBlackoutRepeat] = useState(false);
+    const [savingBlackout, setSavingBlackout] = useState(false);
+
     // Change password modal
     const [showPasswordModal, setShowPasswordModal] = useState(false);
     const [passwordForm, setPasswordForm] = useState({ current: '', next: '', confirm: '' });
@@ -164,9 +185,10 @@ export default function SettingsPage() {
 
     async function fetchBusinessSettings() {
         try {
-            const [settingsRes, budgetRes] = await Promise.all([
+            const [settingsRes, budgetRes, blackoutsRes] = await Promise.all([
                 fetch('/api/business/settings'),
                 fetch('/api/settings/budget'),
+                fetch('/api/blackouts'),
             ]);
             const data = await settingsRes.json();
             if (data.success) {
@@ -176,11 +198,18 @@ export default function SettingsPage() {
                 setTimezone(data.business.timezone || 'Asia/Colombo');
                 setBusinessHours(data.business.business_hours || DEFAULT_HOURS);
                 setCancelWindow(String(data.business.cancellation_window_hours ?? 0));
+                setBotName(data.business.bot_name || 'Assistant');
+                setBotGreeting(data.business.bot_greeting || '');
+                setBotTone(data.business.bot_tone || 'friendly');
+                setReminderHours(Array.isArray(data.business.reminder_hours) ? data.business.reminder_hours : [24, 1]);
             }
             if (budgetRes.ok) {
                 const bud = await budgetRes.json();
                 setMonthlyBudget(String(bud.monthly_budget_usd ?? 10));
                 setCurrentUsage(bud.current_usage_usd ?? 0);
+            }
+            if (blackoutsRes.ok) {
+                setBlackouts(await blackoutsRes.json());
             }
         } catch (error) {
             console.error('Failed to fetch settings:', error);
@@ -836,6 +865,187 @@ export default function SettingsPage() {
                                 Set to 0 to disable the limit. AI calls that would exceed the limit are blocked.
                             </p>
                         </div>
+                    </div>
+                </div>
+
+                {/* ── Bot Settings (C2) ── */}
+                <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+                    <div className="flex items-center gap-3 mb-6">
+                        <div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center">
+                            <Bot size={20} className="text-indigo-600" />
+                        </div>
+                        <div>
+                            <h2 className="text-lg font-semibold text-gray-900">Bot Settings</h2>
+                            <p className="text-sm text-gray-500">Customise your AI assistant's name, greeting, and tone</p>
+                        </div>
+                    </div>
+                    <div className="space-y-4 max-w-lg">
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Bot Name</label>
+                                <input type="text" value={botName} onChange={e => setBotName(e.target.value)}
+                                    placeholder="e.g. Layla, Nimal, Booking Bot"
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-500" />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Tone</label>
+                                <select value={botTone} onChange={e => setBotTone(e.target.value)}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-indigo-500">
+                                    <option value="friendly">Friendly</option>
+                                    <option value="professional">Professional</option>
+                                    <option value="casual">Casual</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                                Custom Greeting <span className="text-gray-400 font-normal">(optional — use {'{bot_name}'} as placeholder)</span>
+                            </label>
+                            <textarea value={botGreeting} onChange={e => setBotGreeting(e.target.value)}
+                                placeholder="Hi! I'm {bot_name}. How can I help you today?"
+                                rows={2}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-500 resize-none" />
+                        </div>
+                        <button
+                            onClick={async () => {
+                                setSavingBot(true); setBotSaved(false);
+                                if (await patchSettings({ bot_name: botName.trim() || 'Assistant', bot_greeting: botGreeting.trim() || null, bot_tone: botTone })) {
+                                    setBotSaved(true); setTimeout(() => setBotSaved(false), 3000);
+                                }
+                                setSavingBot(false);
+                            }}
+                            disabled={savingBot}
+                            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg flex items-center gap-2 disabled:opacity-50">
+                            {savingBot ? <Loader2 size={14} className="animate-spin" /> : botSaved ? <CheckCircle2 size={14} /> : <Save size={14} />}
+                            {botSaved ? 'Saved!' : 'Save Bot Settings'}
+                        </button>
+                    </div>
+                </div>
+
+                {/* ── Reminder Schedule (B6) ── */}
+                <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+                    <div className="flex items-center gap-3 mb-6">
+                        <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center">
+                            <Bell size={20} className="text-blue-600" />
+                        </div>
+                        <div>
+                            <h2 className="text-lg font-semibold text-gray-900">Reminder Schedule</h2>
+                            <p className="text-sm text-gray-500">When should customers receive appointment reminders?</p>
+                        </div>
+                    </div>
+                    <div className="space-y-3 max-w-md">
+                        <div className="flex flex-wrap gap-2">
+                            {[...reminderHours].sort((a, b) => b - a).map(h => (
+                                <span key={h} className="flex items-center gap-1 px-3 py-1.5 bg-blue-50 border border-blue-200 rounded-full text-sm text-blue-700 font-medium">
+                                    {h >= 24 ? `${h / 24}d` : `${h}h`} before
+                                    <button onClick={() => setReminderHours(prev => prev.filter(x => x !== h))}
+                                        className="ml-1 text-blue-400 hover:text-blue-700"><X size={12} /></button>
+                                </span>
+                            ))}
+                        </div>
+                        <div className="flex gap-2">
+                            <input type="number" value={reminderInput} onChange={e => setReminderInput(e.target.value)}
+                                placeholder="Hours before (e.g. 48, 24, 2, 1)"
+                                min={1} max={720} step={1}
+                                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400" />
+                            <button onClick={() => {
+                                const h = parseInt(reminderInput);
+                                if (h > 0 && !reminderHours.includes(h)) { setReminderHours(p => [...p, h]); setReminderInput(''); }
+                            }} className="px-3 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 flex items-center gap-1">
+                                <Plus size={14} /> Add
+                            </button>
+                        </div>
+                        <button
+                            onClick={async () => {
+                                setSavingReminders(true); setRemindersSaved(false);
+                                if (await patchSettings({ reminder_hours: reminderHours })) {
+                                    setRemindersSaved(true); setTimeout(() => setRemindersSaved(false), 3000);
+                                }
+                                setSavingReminders(false);
+                            }}
+                            disabled={savingReminders || reminderHours.length === 0}
+                            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg flex items-center gap-2 disabled:opacity-50">
+                            {savingReminders ? <Loader2 size={14} className="animate-spin" /> : remindersSaved ? <CheckCircle2 size={14} /> : <Save size={14} />}
+                            {remindersSaved ? 'Saved!' : 'Save Reminder Schedule'}
+                        </button>
+                    </div>
+                </div>
+
+                {/* ── Blocked Dates (B1) ── */}
+                <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+                    <div className="flex items-center gap-3 mb-6">
+                        <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
+                            <Ban size={20} className="text-red-500" />
+                        </div>
+                        <div>
+                            <h2 className="text-lg font-semibold text-gray-900">Blocked Dates</h2>
+                            <p className="text-sm text-gray-500">Mark holidays or closure days — the bot will not offer slots on these dates</p>
+                        </div>
+                    </div>
+                    <div className="space-y-4 max-w-lg">
+                        {/* Add new blackout */}
+                        <div className="grid grid-cols-12 gap-2 items-end">
+                            <div className="col-span-4">
+                                <label className="block text-xs font-medium text-gray-600 mb-1">Date</label>
+                                <input type="date" value={blackoutDate} onChange={e => setBlackoutDate(e.target.value)}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-red-400" />
+                            </div>
+                            <div className="col-span-4">
+                                <label className="block text-xs font-medium text-gray-600 mb-1">Reason</label>
+                                <input type="text" value={blackoutLabel} onChange={e => setBlackoutLabel(e.target.value)}
+                                    placeholder="e.g. Public Holiday"
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-red-400" />
+                            </div>
+                            <div className="col-span-2 flex items-center gap-1 pb-2">
+                                <input type="checkbox" id="repeat" checked={blackoutRepeat} onChange={e => setBlackoutRepeat(e.target.checked)} className="rounded" />
+                                <label htmlFor="repeat" className="text-xs text-gray-600">Yearly</label>
+                            </div>
+                            <div className="col-span-2">
+                                <button
+                                    onClick={async () => {
+                                        if (!blackoutDate) return;
+                                        setSavingBlackout(true);
+                                        try {
+                                            const res = await fetch('/api/blackouts', {
+                                                method: 'POST',
+                                                headers: { 'Content-Type': 'application/json' },
+                                                body: JSON.stringify({ date: blackoutDate, label: blackoutLabel || 'Closed', repeat_annually: blackoutRepeat }),
+                                            });
+                                            if (res.ok) {
+                                                const added = await res.json();
+                                                setBlackouts(p => [...p.filter(b => b.date !== blackoutDate), added].sort((a, b) => a.date.localeCompare(b.date)));
+                                                setBlackoutDate('');
+                                            }
+                                        } finally { setSavingBlackout(false); }
+                                    }}
+                                    disabled={!blackoutDate || savingBlackout}
+                                    className="w-full px-3 py-2 bg-red-600 text-white rounded-lg text-sm hover:bg-red-700 disabled:opacity-50 flex items-center justify-center gap-1">
+                                    {savingBlackout ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />} Add
+                                </button>
+                            </div>
+                        </div>
+                        {/* Blackout list */}
+                        {blackouts.length > 0 && (
+                            <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                                {blackouts.map(b => (
+                                    <div key={b.id} className="flex items-center justify-between bg-red-50 border border-red-100 rounded-lg px-3 py-2">
+                                        <div>
+                                            <span className="text-sm font-medium text-gray-800">{b.date}</span>
+                                            <span className="mx-2 text-gray-300">·</span>
+                                            <span className="text-sm text-gray-600">{b.label}</span>
+                                            {b.repeat_annually && <span className="ml-2 text-xs text-red-500">(repeats yearly)</span>}
+                                        </div>
+                                        <button onClick={async () => {
+                                            await fetch(`/api/blackouts?id=${b.id}`, { method: 'DELETE' });
+                                            setBlackouts(p => p.filter(x => x.id !== b.id));
+                                        }} className="text-gray-400 hover:text-red-600 transition-colors"><Trash2 size={14} /></button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                        {blackouts.length === 0 && (
+                            <p className="text-sm text-gray-400 italic">No blocked dates yet</p>
+                        )}
                     </div>
                 </div>
 

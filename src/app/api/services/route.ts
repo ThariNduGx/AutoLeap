@@ -52,7 +52,7 @@ export async function GET(req: NextRequest) {
   const supabase = getSupabaseClient();
   const { data, error } = await (supabase
     .from('services') as any)
-    .select('id, name, description, duration_minutes, price, currency, tiers, is_active, sort_order, created_at')
+    .select('id, name, description, duration_minutes, buffer_minutes, min_advance_hours, price, currency, tiers, is_active, sort_order, created_at')
     .eq('business_id', session.businessId)
     .order('sort_order', { ascending: true })
     .order('created_at', { ascending: true });
@@ -92,6 +92,9 @@ export async function POST(req: NextRequest) {
   const price = body.price != null && body.price !== '' ? parseFloat(body.price) : null;
 
   const supabase = getSupabaseClient();
+  const bufferMinutes = Math.max(0, parseInt(body.buffer_minutes) || 0);
+  const minAdvanceHours = Math.max(0, parseInt(body.min_advance_hours) || 0);
+
   const { data, error } = await (supabase
     .from('services') as any)
     .insert({
@@ -99,6 +102,8 @@ export async function POST(req: NextRequest) {
       name,
       description: (body.description || '').trim() || null,
       duration_minutes: duration,
+      buffer_minutes: bufferMinutes,
+      min_advance_hours: minAdvanceHours,
       price: price != null && !isNaN(price) ? price : null,
       currency: (body.currency || 'LKR').toUpperCase(),
       tiers,
@@ -121,7 +126,7 @@ export async function PATCH(req: NextRequest) {
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
 
   const body = await req.json();
-  const scalar = ['name', 'description', 'duration_minutes', 'price', 'currency', 'is_active', 'sort_order'] as const;
+  const scalar = ['name', 'description', 'duration_minutes', 'buffer_minutes', 'min_advance_hours', 'price', 'currency', 'is_active', 'sort_order'] as const;
   const updates: Record<string, unknown> = {};
   for (const key of scalar) {
     if (key in body) updates[key] = body[key];

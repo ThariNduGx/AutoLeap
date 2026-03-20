@@ -16,6 +16,8 @@ import {
     TrendingUp,
     Briefcase,
     Users,
+    UserCircle,
+    Star,
 } from 'lucide-react';
 
 export default function DashboardLayout({
@@ -52,7 +54,9 @@ export default function DashboardLayout({
         { name: 'Conversations', href: '/dashboard/conversations', icon: MessageSquare },
         { name: 'Bookings', href: '/dashboard/bookings', icon: Calendar },
         { name: 'Services', href: '/dashboard/services', icon: Briefcase },
+        { name: 'Customers', href: '/dashboard/customers', icon: UserCircle },
         { name: 'Waitlist', href: '/dashboard/waitlist', icon: Users },
+        { name: 'Reviews', href: '/dashboard/reviews', icon: Star },
         { name: 'Analytics', href: '/dashboard/analytics', icon: TrendingUp },
         { name: 'FAQs', href: '/dashboard/faqs', icon: BarChart2 },
         { name: 'Cost Center', href: '/dashboard/costs', icon: CreditCard },

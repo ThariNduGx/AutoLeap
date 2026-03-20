@@ -123,7 +123,7 @@ export default function DashboardPage() {
                     </div>
                     <p className="text-gray-500 text-sm font-medium">Booking Success Rate</p>
                     <h3 className="text-2xl font-bold text-gray-900 mt-1">
-                        {completionRate !== null ? `${completionRate}%` : '—'}
+                        {completionRate != null ? `${completionRate}%` : '—'}
                     </h3>
                     {stats?.bookingAttempts ? (
                         <p className="text-xs text-gray-400 mt-1">
@@ -133,7 +133,7 @@ export default function DashboardPage() {
                         <p className="text-xs text-gray-400 mt-1">No bookings yet</p>
                     )}
                     {/* Progress bar */}
-                    {completionRate !== null && (
+                    {completionRate != null && (
                         <div className="mt-3 bg-gray-100 rounded-full h-1.5 overflow-hidden">
                             <div
                                 className={`h-full rounded-full transition-all ${

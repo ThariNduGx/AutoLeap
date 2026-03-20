@@ -88,22 +88,33 @@ async function getOAuth2Client(businessId: string): Promise<OAuth2Client | null>
 export async function getAvailableSlots(
   businessId: string,
   date: string, // Format: YYYY-MM-DD
-  businessHours: { start: string; end: string } = { start: '08:00', end: '18:00' }
+  businessHours: { start: string; end: string } = { start: '08:00', end: '18:00' },
+  options: {
+    durationMinutes?: number;   // service duration — used to check if full block is free
+    bufferMinutes?: number;     // gap to enforce after each appointment
+    minAdvanceHours?: number;   // minimum hours from now before a slot can be offered
+  } = {}
 ): Promise<string[]> {
+  const { durationMinutes = 60, bufferMinutes = 0, minAdvanceHours = 0 } = options;
+  const effectiveBlock = durationMinutes + bufferMinutes; // total calendar time needed
+
   // Fetch business timezone (falls back to Asia/Colombo if not set)
   const config = await getBusinessCalendarConfig(businessId);
   const tz = config?.timezone ?? 'Asia/Colombo';
   // Build the UTC offset string for this timezone at the given date
   const tzOffset = getTzOffset(tz, date);
 
-  const cacheKey = `calendar:availability:${businessId}:${date}`;
+  // Cache key includes options so different service configs don't share stale results
+  const cacheKey = `calendar:availability:${businessId}:${date}:${durationMinutes}:${bufferMinutes}`;
 
   try {
-    // 1. Check Cache
-    const cached = await redis.get<string[]>(cacheKey);
-    if (cached) {
-      console.log('[CALENDAR] ⚡️ Cache hit for', date);
-      return cached;
+    // 1. Check Cache (skip if minAdvanceHours > 0 — "today" slots depend on current time)
+    if (minAdvanceHours === 0) {
+      const cached = await redis.get<string[]>(cacheKey);
+      if (cached) {
+        console.log('[CALENDAR] ⚡️ Cache hit for', date);
+        return cached;
+      }
     }
   } catch (err) {
     console.warn('[CALENDAR] Cache check failed:', err);
@@ -115,7 +126,7 @@ export async function getAvailableSlots(
   try {
     // Get start and end of day using the business's local timezone offset
     const dayStart = new Date(`${date}T${businessHours.start}:00${tzOffset}`);
-    const dayEnd = new Date(`${date}T${businessHours.end}:00${tzOffset}`);
+    const dayEnd   = new Date(`${date}T${businessHours.end}:00${tzOffset}`);
 
     console.log('[CALENDAR] 🔄 API Call: Checking availability for', date);
 
@@ -131,24 +142,35 @@ export async function getAvailableSlots(
 
     const busySlots = response.data.calendars?.primary?.busy || [];
 
-    // Generate all possible 1-hour slots
+    // Generate all possible 1-hour slots (keep hourly grid for consistency)
     const allSlots: string[] = [];
     let currentTime = new Date(dayStart);
+    // Last possible start: dayEnd minus the effective block
+    const lastPossibleStart = new Date(dayEnd.getTime() - effectiveBlock * 60 * 1000);
 
-    while (currentTime < dayEnd) {
-      allSlots.push(currentTime.toTimeString().substring(0, 5)); // HH:MM format
-      currentTime.setHours(currentTime.getHours() + 1);
+    while (currentTime <= lastPossibleStart) {
+      allSlots.push(currentTime.toTimeString().substring(0, 5)); // HH:MM
+      currentTime = new Date(currentTime.getTime() + 60 * 60 * 1000); // +1 hour
     }
 
-    // Filter out busy slots using the business's local timezone offset
+    // Minimum advance time: earliest bookable moment
+    const earliestBookable = minAdvanceHours > 0
+      ? new Date(Date.now() + minAdvanceHours * 3_600_000)
+      : null;
+
+    // Filter out busy and too-soon slots
     const availableSlots = allSlots.filter((slot) => {
       const slotStart = new Date(`${date}T${slot}:00${tzOffset}`);
-      const slotEnd = new Date(slotStart.getTime() + 60 * 60 * 1000); // +1 hour
+      // A slot needs `effectiveBlock` minutes of free time
+      const slotEnd = new Date(slotStart.getTime() + effectiveBlock * 60 * 1000);
 
-      // Check if slot overlaps with any busy time
+      // Minimum advance booking check
+      if (earliestBookable && slotStart < earliestBookable) return false;
+
+      // Overlap check against busy periods
       const isOverlapping = busySlots.some((busy) => {
         const busyStart = new Date(busy.start!);
-        const busyEnd = new Date(busy.end!);
+        const busyEnd   = new Date(busy.end!);
         return slotStart < busyEnd && slotEnd > busyStart;
       });
 
@@ -157,9 +179,9 @@ export async function getAvailableSlots(
 
     console.log('[CALENDAR] ✅ Found', availableSlots.length, 'available slots');
 
-    // 2. Set Cache (TTL 24 hours = 86400 seconds)
+    // 2. Set Cache (TTL 24 hours — skip for same-day advance-booking queries)
     try {
-      if (availableSlots.length > 0) {
+      if (availableSlots.length > 0 && minAdvanceHours === 0) {
         await redis.set(cacheKey, availableSlots, { ex: 86400 });
       }
     } catch (err) {
@@ -174,17 +196,94 @@ export async function getAvailableSlots(
 }
 
 /**
+ * Reschedule an existing appointment: update DB row + patch the Google Calendar event.
+ */
+export async function rescheduleAppointment(
+  businessId: string,
+  appointmentId: string,
+  details: {
+    newDate: string;  // YYYY-MM-DD
+    newTime: string;  // HH:MM
+  }
+): Promise<{ success: boolean; error?: string }> {
+  const supabase = getSupabaseClient();
+
+  // Fetch the existing appointment to get duration + google_event_id
+  const { data: appt, error: fetchErr } = await (supabase
+    .from('appointments') as any)
+    .select('google_event_id, duration_minutes, service_type, customer_name, customer_phone')
+    .eq('id', appointmentId)
+    .eq('business_id', businessId)
+    .single();
+
+  if (fetchErr || !appt) return { success: false, error: 'Appointment not found' };
+
+  const [auth, config] = await Promise.all([
+    getOAuth2Client(businessId),
+    getBusinessCalendarConfig(businessId),
+  ]);
+  if (!auth) return { success: false, error: 'Calendar not connected' };
+
+  const tz = config?.timezone ?? 'Asia/Colombo';
+  const tzOffset = getTzOffset(tz, details.newDate);
+  const startDT = new Date(`${details.newDate}T${details.newTime}:00${tzOffset}`);
+  const endDT   = new Date(startDT.getTime() + (appt.duration_minutes ?? 60) * 60 * 1000);
+
+  try {
+    if (appt.google_event_id) {
+      await calendar.events.patch({
+        auth,
+        calendarId: 'primary',
+        eventId: appt.google_event_id,
+        requestBody: {
+          summary: `${appt.service_type} - ${appt.customer_name}`,
+          start: { dateTime: startDT.toISOString(), timeZone: tz },
+          end:   { dateTime: endDT.toISOString(),   timeZone: tz },
+        },
+      });
+    }
+
+    // Update DB
+    await (supabase.from('appointments') as any)
+      .update({
+        appointment_date: details.newDate,
+        appointment_time: details.newTime,
+        reminders_sent: {},
+        review_requested_at: null,
+      })
+      .eq('id', appointmentId)
+      .eq('business_id', businessId);
+
+    // Invalidate availability cache for both dates
+    try {
+      const oldApptDate = appt.appointment_date;
+      await Promise.all([
+        redis.del(`calendar:availability:${businessId}:${details.newDate}`),
+        oldApptDate && redis.del(`calendar:availability:${businessId}:${oldApptDate}`),
+      ]);
+    } catch { /* non-fatal */ }
+
+    console.log('[CALENDAR] ✅ Appointment rescheduled:', appointmentId);
+    return { success: true };
+  } catch (err: any) {
+    console.error('[CALENDAR] Reschedule error:', err);
+    return { success: false, error: err.message || 'Reschedule failed' };
+  }
+}
+
+/**
  * Create a calendar event (book appointment)
  */
 export async function createAppointment(
   businessId: string,
   details: {
-    date: string; // YYYY-MM-DD
-    time: string; // HH:MM
-    duration: number; // minutes
+    date: string;
+    time: string;
+    duration: number;
     customerName: string;
     customerPhone: string;
     serviceType: string;
+    notes?: string;
   }
 ): Promise<{ success: boolean; eventId?: string; error?: string }> {
   const [auth, config] = await Promise.all([
@@ -210,7 +309,7 @@ export async function createAppointment(
       calendarId: 'primary',
       requestBody: {
         summary: `${details.serviceType} - ${details.customerName}`,
-        description: `Customer: ${details.customerName}\nPhone: ${details.customerPhone}\nService: ${details.serviceType}`,
+        description: `Customer: ${details.customerName}\nPhone: ${details.customerPhone}\nService: ${details.serviceType}${details.notes ? `\nNotes: ${details.notes}` : ''}`,
         start: {
           dateTime: startDateTime.toISOString(),
           timeZone: tz,

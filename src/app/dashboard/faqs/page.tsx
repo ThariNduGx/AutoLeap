@@ -1,11 +1,17 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { Plus, Trash2, Tag, Loader2, Upload, FileText, CheckCircle2, AlertCircle, TrendingUp } from 'lucide-react';
+import { Plus, Trash2, Tag, Loader2, Upload, FileText, CheckCircle2, AlertCircle, TrendingUp, Sparkles } from 'lucide-react';
 
 export default function FAQsPage() {
     const [faqs, setFaqs] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
+
+    // C3: FAQ suggestions
+    const [suggestions, setSuggestions]     = useState<{ question: string; answer: string }[]>([]);
+    const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+    const [suggestError, setSuggestError]   = useState('');
+    const [addingIdx, setAddingIdx]         = useState<number | null>(null);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [newFaq, setNewFaq] = useState({ question: '', answer: '', category: 'general' });
     const [saving, setSaving] = useState(false);
@@ -146,8 +152,72 @@ export default function FAQsPage() {
                         <Plus size={20} />
                         Add FAQ
                     </button>
+                    <button
+                        onClick={async () => {
+                            setLoadingSuggestions(true); setSuggestError(''); setSuggestions([]);
+                            try {
+                                const res = await fetch('/api/faqs/suggest', { method: 'POST' });
+                                const data = await res.json();
+                                if (data.suggestions) setSuggestions(data.suggestions);
+                                else setSuggestError(data.error || 'Failed to analyse');
+                            } catch { setSuggestError('Network error'); }
+                            finally { setLoadingSuggestions(false); }
+                        }}
+                        disabled={loadingSuggestions}
+                        className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
+                    >
+                        {loadingSuggestions ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
+                        Suggest FAQs
+                    </button>
                 </div>
             </div>
+
+            {/* AI-suggested FAQs panel */}
+            {(suggestions.length > 0 || suggestError) && (
+                <div className="mb-6 bg-purple-50 border border-purple-200 rounded-2xl p-5">
+                    <div className="flex items-center justify-between mb-3">
+                        <p className="font-semibold text-purple-800 flex items-center gap-2">
+                            <Sparkles size={15} /> AI Suggested FAQs
+                        </p>
+                        <button onClick={() => setSuggestions([])} className="text-purple-400 hover:text-purple-700"><FileText size={14} /></button>
+                    </div>
+                    {suggestError && <p className="text-sm text-red-600">{suggestError}</p>}
+                    <div className="space-y-3">
+                        {suggestions.map((s, i) => (
+                            <div key={i} className="bg-white rounded-xl border border-purple-100 p-4">
+                                <p className="text-sm font-semibold text-gray-800 mb-1">{s.question}</p>
+                                <p className="text-sm text-gray-600 mb-3">{s.answer}</p>
+                                <div className="flex gap-2">
+                                    <button
+                                        onClick={async () => {
+                                            setAddingIdx(i);
+                                            try {
+                                                const res = await fetch('/api/faqs', {
+                                                    method: 'POST',
+                                                    headers: { 'Content-Type': 'application/json' },
+                                                    body: JSON.stringify({ question: s.question, answer: s.answer, category: 'suggested' }),
+                                                });
+                                                if (res.ok) {
+                                                    const added = await res.json();
+                                                    setFaqs(f => [added, ...f]);
+                                                    setSuggestions(p => p.filter((_, j) => j !== i));
+                                                }
+                                            } finally { setAddingIdx(null); }
+                                        }}
+                                        disabled={addingIdx === i}
+                                        className="px-3 py-1.5 bg-purple-600 text-white text-xs rounded-lg hover:bg-purple-700 disabled:opacity-50 flex items-center gap-1">
+                                        {addingIdx === i ? <Loader2 size={11} className="animate-spin" /> : <Plus size={11} />} Add to FAQ
+                                    </button>
+                                    <button onClick={() => setSuggestions(p => p.filter((_, j) => j !== i))}
+                                        className="px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-100 rounded-lg">
+                                        Dismiss
+                                    </button>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
 
             {loading ? (
                 <div className="text-center py-12 text-gray-500">Loading FAQs...</div>
