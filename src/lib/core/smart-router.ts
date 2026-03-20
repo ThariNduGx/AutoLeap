@@ -3,15 +3,13 @@ export type IntentType = 'booking' | 'cancellation' | 'reschedule' | 'faq' | 'gr
 interface IntentPattern {
   intent: IntentType;
   patterns: RegExp[];
-  priority: number; // Higher priority checked first
+  priority: number;
 }
 
 const INTENT_RULES: IntentPattern[] = [
   {
     intent: 'greeting',
-    patterns: [
-      /^(hi|hello|hey|good morning|good afternoon|good evening)/i,
-    ],
+    patterns: [/^(hi|hello|hey|good morning|good afternoon|good evening)/i],
     priority: 10,
   },
   {
@@ -20,7 +18,7 @@ const INTENT_RULES: IntentPattern[] = [
       /\b(reschedule|rebook|change.*appointment|move.*appointment|different.*time|another.*time|new.*time)\b/i,
       /\b(change|move|shift)\b.*\b(booking|slot|appointment)\b/i,
     ],
-    priority: 10, // Same priority as cancellation — check before booking
+    priority: 10,
   },
   {
     intent: 'cancellation',
@@ -30,7 +28,7 @@ const INTENT_RULES: IntentPattern[] = [
       /\b(cancel|cancell?ation)\b.*\b(my|the)\b/i,
       /\bdon'?t.*want.*appointment\b/i,
     ],
-    priority: 10, // Same as greeting — check before booking
+    priority: 10,
   },
   {
     intent: 'booking',
@@ -51,7 +49,6 @@ const INTENT_RULES: IntentPattern[] = [
   {
     intent: 'complaint',
     patterns: [
-      // NOTE: 'cancel' intentionally excluded — handled by cancellation intent at higher priority
       /\b(issue|problem|wrong|broken|refund|not working|bad|terrible|awful|horrible)\b/i,
       /\b(complaint|complain|disappointed|unhappy|frustrated|angry|upset)\b/i,
       /\b(never again|worst|useless|scam|rude|poor service)\b/i,
@@ -73,57 +70,109 @@ const INTENT_RULES: IntentPattern[] = [
 ];
 
 /**
- * Classify user intent using regex patterns (NO API CALLS).
- * This is the first filter - cheap and fast.
+ * Fast regex-based classifier — used as a cheap first pass.
  */
 export function classifyIntent(message: string): IntentType {
   const normalized = message.trim().toLowerCase();
-
-  // Sort by priority and find first match
-  const sortedRules = [...INTENT_RULES].sort((a, b) => b.priority - a.priority);
-
-  for (const rule of sortedRules) {
+  const sorted = [...INTENT_RULES].sort((a, b) => b.priority - a.priority);
+  for (const rule of sorted) {
     for (const pattern of rule.patterns) {
       if (pattern.test(normalized)) {
-        console.log('[ROUTER] Intent detected:', rule.intent, '|', message.substring(0, 50));
+        console.log('[ROUTER] Intent detected (regex):', rule.intent, '|', message.substring(0, 50));
         return rule.intent;
       }
     }
   }
-
   return 'unknown';
 }
 
 /**
- * Determine which model to use based on intent and the active provider.
- * Cheap models for simple tasks, powerful models for complex ones.
- * Returns the correct model name for cost tracking.
+ * LLM-based intent classifier using Gemini Flash.
+ * Returns intent + extracted entities. Falls back to regex on error.
+ * Cost: ~$0.00001 per call — negligible.
  */
-export function selectModel(intent: IntentType): string {
-  // When running in Gemini dev mode, all completions use gemini-flash-latest.
-  // Returning the correct name here ensures cost-tracker records $0 (free tier),
-  // not incorrect OpenAI pricing.
-  const useGemini = process.env.USE_GEMINI_FOR_DEV === 'true';
-  if (useGemini) {
-    return 'gemini-flash-latest';
+export async function classifyIntentLLM(message: string): Promise<{
+  intent: IntentType;
+  entities: {
+    service?: string;
+    date?: string;
+    time?: string;
+    is_price_query?: boolean;
+  };
+}> {
+  // Fast-path: obvious greetings/cancellations don't need LLM
+  const fastIntent = classifyIntent(message);
+  if (['greeting', 'cancellation', 'reschedule'].includes(fastIntent)) {
+    return { intent: fastIntent, entities: {} };
   }
+
+  try {
+    const { llm } = await import('../infrastructure/llm-adapter');
+    const prompt = `Classify this customer message for a service booking business.
+Return ONLY a JSON object with these exact fields (no markdown, no explanation):
+{
+  "intent": one of ["booking","faq","complaint","status","unknown"],
+  "service": "mentioned service name or null",
+  "date": "mentioned date in natural language or null",
+  "time": "mentioned time or null",
+  "is_price_query": true/false
+}
+
+Message: "${message.replace(/"/g, "'")}"`;
+
+    const response = await llm.chat.completions.create({
+      model: 'gpt-4o-mini' as any,
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 80,
+      temperature: 0,
+    });
+
+    const raw = response.choices[0].message.content || '{}';
+    // Strip markdown code blocks if present
+    const cleaned = raw.replace(/```json?\s*/gi, '').replace(/```/g, '').trim();
+    const parsed = JSON.parse(cleaned);
+
+    const intent: IntentType = (
+      ['booking', 'faq', 'complaint', 'status', 'cancellation', 'reschedule', 'greeting', 'unknown'].includes(parsed.intent)
+        ? parsed.intent
+        : 'unknown'
+    ) as IntentType;
+
+    console.log('[ROUTER] Intent detected (LLM):', intent, '|', message.substring(0, 50));
+    return {
+      intent,
+      entities: {
+        service:        parsed.service || undefined,
+        date:           parsed.date    || undefined,
+        time:           parsed.time    || undefined,
+        is_price_query: !!parsed.is_price_query,
+      },
+    };
+  } catch (err) {
+    console.warn('[ROUTER] LLM classification failed, falling back to regex:', err);
+    return { intent: fastIntent, entities: {} };
+  }
+}
+
+/**
+ * Determine model based on intent.
+ */
+export function selectModel(intent: IntentType): 'gemini-flash-latest' | 'gpt-4o-mini' | 'gpt-4o' {
+  const useGemini = process.env.USE_GEMINI_FOR_DEV === 'true';
+  if (useGemini) return 'gemini-flash-latest';
 
   switch (intent) {
     case 'greeting':
     case 'status':
-      return 'gpt-4o-mini'; // Simple responses, cheap model
-
+      return 'gpt-4o-mini';
     case 'faq':
-      return 'gpt-4o-mini'; // RAG-assisted, cheap model sufficient
-
+      return 'gpt-4o-mini';
     case 'booking':
     case 'cancellation':
     case 'reschedule':
     case 'complaint':
-      return 'gpt-4o'; // Complex tool-calling, needs powerful model
-
-    case 'unknown':
+      return 'gpt-4o';
     default:
-      return 'gpt-4o-mini'; // Start cheap, escalate if needed
+      return 'gpt-4o-mini';
   }
 }

@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
         // Get business info for this user
         const { data: business, error } = await (supabase
             .from('businesses') as any)
-            .select('id, name, telegram_bot_token, fb_page_id, fb_page_name, owner_telegram_chat_id, google_calendar_token, google_calendar_email, timezone, business_hours')
+            .select('id, name, telegram_bot_token, fb_page_id, fb_page_name, owner_telegram_chat_id, google_calendar_token, google_calendar_email, timezone, business_hours, cancellation_window_hours, bot_name, bot_greeting, bot_tone, reminder_hours')
             .eq('id', session.businessId)
             .single();
 
@@ -42,6 +42,11 @@ export async function GET(request: NextRequest) {
                 google_calendar_email: business.google_calendar_email || null,
                 timezone: business.timezone || 'Asia/Colombo',
                 business_hours: business.business_hours || null,
+                cancellation_window_hours: business.cancellation_window_hours ?? 0,
+                bot_name:        business.bot_name        || 'Assistant',
+                bot_greeting:    business.bot_greeting    || '',
+                bot_tone:        business.bot_tone        || 'friendly',
+                reminder_hours:  business.reminder_hours  ?? [24, 1],
             },
         });
 
@@ -65,7 +70,7 @@ export async function PATCH(request: NextRequest) {
         }
 
         const body = await request.json();
-        const allowed = ['owner_telegram_chat_id', 'name', 'phone', 'timezone', 'business_hours'] as const;
+        const allowed = ['owner_telegram_chat_id', 'name', 'phone', 'timezone', 'business_hours', 'cancellation_window_hours', 'bot_name', 'bot_greeting', 'bot_tone', 'reminder_hours'] as const;
 
         // Only pick allowed fields from the request body
         const updates: Record<string, unknown> = {};

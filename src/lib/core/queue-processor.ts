@@ -1,7 +1,7 @@
 // src/lib/core/queue-processor.ts
 
 import { getSupabaseClient } from '../infrastructure/supabase';
-import { classifyIntent, selectModel } from './smart-router';
+import { classifyIntent, classifyIntentLLM, selectModel } from './smart-router';
 import { estimateCost, requestBudget, calculateActualCost, commitCost } from '../infrastructure/cost-tracker';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { calendarToolsForGemini, executeCalendarTool } from './tools/calendar-tools';
@@ -138,7 +138,6 @@ async function processItem(item: QueueItem): Promise<void> {
 
   // Inline keyboard slot selections are always booking continuations
   const isSlotCallback = message.text.startsWith('slot:');
-  const intent = isSlotCallback ? 'booking' : classifyIntent(message.text);
 
   // Skip AI if this conversation has been handed to a human
   const activeConv = await getActiveConversation(item.business_id, message.chatId);
@@ -147,9 +146,20 @@ async function processItem(item: QueueItem): Promise<void> {
     await markCompleted(item.id, 'human_mode');
     return;
   }
-  const model = selectModel(intent);
 
-  console.log('[QUEUE] Intent:', intent, '| Model:', model);
+  // C1: LLM-based intent classification (falls back to regex internally)
+  let intent: string;
+  let intentEntities: Record<string, any> = {};
+  if (isSlotCallback) {
+    intent = 'booking';
+  } else {
+    const { intent: llmIntent, entities } = await classifyIntentLLM(message.text);
+    intent = llmIntent;
+    intentEntities = entities;
+  }
+
+  const model = selectModel(intent as any);
+  console.log('[QUEUE] Intent:', intent, '| Entities:', intentEntities, '| Model:', model);
 
   const estimate = estimateCost(model, message.text, 150);
   const budgetApproved = await requestBudget(item.business_id, estimate);
@@ -172,7 +182,7 @@ async function processItem(item: QueueItem): Promise<void> {
       break;
 
     case 'booking':
-      result = await handleBooking(message, item.business_id, model, platform);
+      result = await handleBooking(message, item.business_id, model, platform, intentEntities);
       break;
 
     case 'status':
@@ -288,6 +298,23 @@ async function getOrCreateConversation(
     .single();
 
   if (error || !created) {
+    // Handle potential race condition — another concurrent request may have created
+    // the conversation between our SELECT check and this INSERT. Try fetching again.
+    if (error) {
+      const { data: raceWinner } = await (supabase
+        .from('conversations') as any)
+        .select('*')
+        .eq('business_id', businessId)
+        .eq('customer_chat_id', customerId)
+        .gt('expires_at', new Date().toISOString())
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (raceWinner) {
+        console.log('[CONVERSATION] Race resolved — using existing:', (raceWinner as any).id);
+        return raceWinner as any as Conversation;
+      }
+    }
     console.error('[CONVERSATION] Failed to create:', error);
     throw new Error('Failed to create conversation');
   }
@@ -542,9 +569,36 @@ async function handleFAQ(
   const { llm } = await import('../infrastructure/llm-adapter');
 
   try {
-    const relevantFAQs = await searchFAQs(businessId, message.text, 0.6, 3);
+    // Fetch active services + tiers in parallel with FAQ search
+    const [relevantFAQs, { data: svcRows }] = await Promise.all([
+      searchFAQs(businessId, message.text, 0.6, 3),
+      (getSupabaseClient().from('services') as any)
+        .select('name, description, duration_minutes, price, currency, tiers')
+        .eq('business_id', businessId)
+        .eq('is_active', true)
+        .order('sort_order', { ascending: true }),
+    ]);
 
-    if (relevantFAQs.length === 0) {
+    // Build a services pricing block (injected into the FAQ context so the AI
+    // can answer pricing questions even if there's no dedicated FAQ for them)
+    let servicesPricingBlock = '';
+    if (svcRows && svcRows.length > 0) {
+      servicesPricingBlock = '\n\nSERVICES & PRICING:\n' +
+        (svcRows as any[]).map((s: any) => {
+          const cur = s.currency || 'LKR';
+          const hasTiers = Array.isArray(s.tiers) && s.tiers.length > 0;
+          if (hasTiers) {
+            const tierLines = (s.tiers as any[])
+              .map((t: any) => `  • ${t.name}: ${cur} ${Number(t.price).toLocaleString()} (${t.duration_minutes ?? s.duration_minutes} min)`)
+              .join('\n');
+            return `${s.name}:\n${tierLines}`;
+          }
+          const price = s.price != null ? ` — ${cur} ${Number(s.price).toLocaleString()}` : '';
+          return `${s.name}${price} (${s.duration_minutes} min)`;
+        }).join('\n');
+    }
+
+    if (relevantFAQs.length === 0 && !servicesPricingBlock) {
       return {
         success: true,
         response: "I don't have information about that. Let me connect you with a team member who can help.",
@@ -552,22 +606,21 @@ async function handleFAQ(
       };
     }
 
-    const context = relevantFAQs
-      .map((faq, i) => `[${i + 1}] Q: ${faq.question}\nA: ${faq.answer}`)
-      .join('\n\n');
+    const faqContext = relevantFAQs.length > 0
+      ? '\n\nFAQs:\n' + relevantFAQs.map((faq, i) => `[${i + 1}] Q: ${faq.question}\nA: ${faq.answer}`).join('\n\n')
+      : '';
 
-    const prompt = `You are a helpful assistant for a service business. Answer the customer's question using ONLY the provided FAQs. If the answer isn't in the FAQs, say you don't know.
-
-FAQs:
-${context}
+    const prompt = `You are a helpful assistant for a service business. Answer the customer's question using the provided FAQs and/or services pricing information below.
+${faqContext}${servicesPricingBlock}
 
 Customer Question: ${message.text}
 
 Instructions:
-- Answer briefly and naturally
-- Cite the FAQ number if relevant
-- Keep response under 100 words
-- Be friendly and professional`;
+- If the customer asks about prices, list ALL relevant packages with their prices clearly.
+- Answer briefly and naturally.
+- If you cannot find the answer, say you don't have that information.
+- Keep response under 150 words.
+- Be friendly and professional.`;
 
     const response = await llm.chat.completions.create({
       model: model as any,
@@ -603,17 +656,64 @@ async function handleBooking(
   message: { text: string; userId: string; chatId: string },
   businessId: string,
   model: string,
-  platform: string = 'telegram'
+  platform: string = 'telegram',
+  entities: Record<string, any> = {}
 ): Promise<ProcessingResult> {
   console.log('[BOOKING] Starting tool-calling agent...');
 
   try {
-    // Fetch business timezone for date/time context
-    const { data: bizTz } = await (getSupabaseClient().from('businesses') as any)
-      .select('timezone')
-      .eq('id', businessId)
-      .single();
-    const tz = bizTz?.timezone ?? 'Asia/Colombo';
+    // Fetch business settings + active services
+    const [{ data: bizRow }, { data: serviceRows }] = await Promise.all([
+      (getSupabaseClient().from('businesses') as any)
+        .select('timezone, bot_name, bot_greeting, bot_tone')
+        .eq('id', businessId)
+        .single(),
+      (getSupabaseClient().from('services') as any)
+        .select('name, description, duration_minutes, price, currency, tiers')
+        .eq('business_id', businessId)
+        .eq('is_active', true)
+        .order('sort_order', { ascending: true })
+        .order('created_at', { ascending: true }),
+    ]);
+    const tz       = bizRow?.timezone    ?? 'Asia/Colombo';
+    const botName  = bizRow?.bot_name    || 'Assistant';
+    const botGreet = bizRow?.bot_greeting || '';
+    const botTone  = bizRow?.bot_tone    || 'friendly';
+
+    // Build a human-readable services + pricing menu for the AI prompt
+    const servicesMenu = (serviceRows && serviceRows.length > 0)
+      ? `\n\nAVAILABLE SERVICES & PRICING:\n` +
+        (serviceRows as any[]).map((s: any, i: number) => {
+          const currency: string = s.currency || 'LKR';
+          const hasTiers = Array.isArray(s.tiers) && s.tiers.length > 0;
+
+          let line = `${i + 1}. **${s.name}**`;
+          if (s.description) line += ` — ${s.description}`;
+
+          if (hasTiers) {
+            // List each package with name, price, and optional duration override
+            line += `\n   Packages:`;
+            (s.tiers as any[]).forEach((t: any, ti: number) => {
+              const dur = t.duration_minutes ?? s.duration_minutes;
+              line += `\n   ${String.fromCharCode(97 + ti)}) ${t.name}: ${currency} ${Number(t.price).toLocaleString()} (${dur} min)`;
+            });
+            line += `\n   ← Ask the customer to pick one of these packages.`;
+          } else {
+            // Single price
+            if (s.price != null) {
+              line += ` | ${currency} ${Number(s.price).toLocaleString()}`;
+            }
+            line += ` (${s.duration_minutes} min)`;
+          }
+          return line;
+        }).join('\n\n') +
+        `\n\nIMPORTANT PRICING RULES:
+- If the customer asks about prices or "how much", show the relevant service and its packages.
+- If a service has packages, ask the customer to choose a specific package BEFORE proceeding.
+- Use the EXACT package name (e.g. "Hydra Cleanup") as the service_type when calling book_appointment.
+- Use the package's duration_minutes (not the service default) when calling book_appointment.
+- If the customer hasn't specified a service yet, present the full menu first.`
+      : '';
 
     // Get or create conversation
     const conversation = await getOrCreateConversation(businessId, message.chatId, 'booking');
@@ -650,21 +750,42 @@ async function handleBooking(
       conversation.state.selected_date = date;
       conversation.state.selected_time = time;
     } else if (isFirstMessage) {
-      currentMessage = `You are a booking assistant for a Sri Lankan service business.
+      // Build entity hints from LLM classifier to skip redundant questions
+      const entityHints: string[] = [];
+      if (entities.service) entityHints.push(`Customer already mentioned service: "${entities.service}"`);
+      if (entities.date)    entityHints.push(`Customer mentioned date: "${entities.date}"`);
+      if (entities.time)    entityHints.push(`Customer mentioned time: "${entities.time}"`);
+      const entityContext = entityHints.length ? `\nKNOWN INFO: ${entityHints.join(' | ')}` : '';
+
+      const greeting = botGreet
+        ? botGreet.replace('{bot_name}', botName)
+        : '';
+      const toneInstruction =
+        botTone === 'professional' ? 'Be professional and formal.' :
+        botTone === 'casual'       ? 'Be casual and relaxed.' :
+        'Be warm, friendly and concise.';
+
+      currentMessage =
+        `You are ${botName}, a booking assistant for a service business. ${toneInstruction}
+ALWAYS respond in the same language the customer writes in (Sinhala, Tamil, English, or any other language).${greeting ? `\nGreeting to use on first contact: "${greeting}"` : ''}${servicesMenu}${entityContext}
 
 Customer message: "${message.text}"
 
-WORKFLOW:
-1. Extract info from message (service, date, time, name, phone)
-2. If you have a date, call get_available_slots to check availability
-3. The system will show available slots as buttons — just ask the customer to pick one
-4. Once a slot is picked, ask for name and phone number
-5. Call book_appointment when you have: date, time, customer_name, customer_phone, service_type
+BOOKING WORKFLOW:
+1. If the customer asks about prices or services, present the menu with package prices.
+2. If a service has multiple packages, ask the customer to choose one before proceeding.
+3. Once the service/package is clear, ask for a preferred date (or suggest one).
+4. Call get_available_slots(date, service_name) — pass the exact service/tier name.
+5. Ask the customer to pick a time slot.
+6. Ask for their full name and phone number.
+7. Before confirming, ask: "Any special requests or notes for your appointment?" (optional — skip if customer seems in a hurry).
+8. Call book_appointment with: date, time, customer_name, customer_phone, service_type, duration, notes (if any), price, currency.
 
 Current date: ${new Date().toLocaleDateString('en-CA', { timeZone: tz })}
 Tomorrow: ${new Date(Date.now() + 86400000).toLocaleDateString('en-CA', { timeZone: tz })}
 
-Start by checking availability if you can determine the date. Accept any valid phone number format.`;
+If known info is listed above, skip asking for those details again.
+Accept any valid phone number format.`;
     } else {
       currentMessage = `Customer's new message: "${message.text}"
 
@@ -768,23 +889,60 @@ Continue helping them complete the booking. State: ${JSON.stringify(conversation
           });
         }
 
-        currentMessage = '';
-        const nextResult = await chat.sendMessage(functionResponses as any);
-        totalTokensIn += nextResult.response.usageMetadata?.promptTokenCount || 0;
-        totalTokensOut += nextResult.response.usageMetadata?.candidatesTokenCount || 0;
+        // Send tool results back to the model and handle chained tool calls in an
+        // inner loop (max 4 additional rounds) — avoids the broken outer-loop
+        // `continue` pattern that was sending an empty string as the next message.
+        let chainResult = await chat.sendMessage(functionResponses as any);
+        totalTokensIn += chainResult.response.usageMetadata?.promptTokenCount || 0;
+        totalTokensOut += chainResult.response.usageMetadata?.candidatesTokenCount || 0;
 
-        // Save tool results to history
         conversation.history.push(
           { role: 'function', parts: functionResponses },
-          { role: 'model', parts: nextResult.response.candidates?.[0]?.content?.parts || [] }
+          { role: 'model', parts: chainResult.response.candidates?.[0]?.content?.parts || [] }
         );
 
-        const nextFunctionCalls = nextResult.response.functionCalls();
-        if (nextFunctionCalls && nextFunctionCalls.length > 0) {
-          continue;
+        // Inner loop: process chained function calls without restarting the outer loop
+        for (let toolRound = 0; toolRound < 4; toolRound++) {
+          const chainCalls = chainResult.response.functionCalls();
+          if (!chainCalls || chainCalls.length === 0) break;
+
+          const chainResponses = [];
+          for (const cc of chainCalls) {
+            const ccArgs = { ...cc.args } as any;
+            if (cc.name === 'book_appointment') ccArgs.customer_chat_id = message.chatId;
+            const ccResult = await executeCalendarTool(cc.name, ccArgs, businessId);
+
+            if (cc.name === 'get_available_slots' && ccResult.available_slots?.length > 0) {
+              conversation.state.pending_slots = ccResult.available_slots;
+              conversation.state.pending_date = ccArgs.date;
+              if (platform === 'messenger') {
+                pendingMessengerSlots = { date: ccArgs.date, slots: ccResult.available_slots };
+              } else {
+                const { buildSlotKeyboard } = await import('../infrastructure/telegram');
+                pendingSlotKeyboard = buildSlotKeyboard(ccResult.available_slots, ccArgs.date);
+              }
+            }
+            if (cc.name === 'book_appointment' && ccResult.success) {
+              conversation.state.booked = true;
+              conversation.state.appointment = ccResult;
+              conversation.state.pending_slots = undefined;
+            }
+
+            chainResponses.push({ functionResponse: { name: cc.name, response: ccResult } });
+          }
+
+          chainResult = await chat.sendMessage(chainResponses as any);
+          totalTokensIn += chainResult.response.usageMetadata?.promptTokenCount || 0;
+          totalTokensOut += chainResult.response.usageMetadata?.candidatesTokenCount || 0;
+          conversation.history.push(
+            { role: 'function', parts: chainResponses },
+            { role: 'model', parts: chainResult.response.candidates?.[0]?.content?.parts || [] }
+          );
         }
 
-        const finalText = nextResult.response.text();
+        const finalText = chainResult.response.text();
+        // Persist the updated message to be used on the next outer iteration
+        currentMessage = finalText || '';
 
         await updateConversation(conversation.id, conversation.state, conversation.history);
 
@@ -963,8 +1121,12 @@ async function handleCancellation(
   businessId: string
 ): Promise<ProcessingResult> {
   const supabase = getSupabaseClient();
-  const { data: bizTzC } = await (supabase.from('businesses') as any).select('timezone').eq('id', businessId).single();
-  const today = new Date().toLocaleDateString('en-CA', { timeZone: bizTzC?.timezone ?? 'Asia/Colombo' });
+  const { data: bizTzC } = await (supabase.from('businesses') as any)
+    .select('timezone, cancellation_window_hours')
+    .eq('id', businessId)
+    .single();
+  const tz = bizTzC?.timezone ?? 'Asia/Colombo';
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: tz });
 
   // Find the customer's most recent upcoming appointment
   const { data: appointment } = await (supabase
@@ -984,6 +1146,28 @@ async function handleCancellation(
       response: "I couldn't find any upcoming appointments linked to this chat. If you believe this is an error, please contact us directly.",
       costIncurred: 0,
     };
+  }
+
+  // ── Cancellation grace-period check ──────────────────────────────────────
+  const windowHours: number = bizTzC?.cancellation_window_hours ?? 0;
+  if (windowHours > 0) {
+    // Build a Date from the appointment's date + time in the business timezone
+    const apptDateTimeStr = `${appointment.appointment_date}T${appointment.appointment_time}`;
+    // Parse as local date in the business timezone
+    const apptEpoch = new Date(apptDateTimeStr).getTime();
+    const nowEpoch = Date.now();
+    const hoursUntilAppt = (apptEpoch - nowEpoch) / 3_600_000;
+
+    if (hoursUntilAppt >= 0 && hoursUntilAppt < windowHours) {
+      return {
+        success: true,
+        response:
+          `I'm sorry, but cancellations must be made at least **${windowHours} hour${windowHours !== 1 ? 's' : ''}** before the appointment. ` +
+          `Your appointment is in approximately ${Math.ceil(hoursUntilAppt)} hour(s), so it can no longer be cancelled online. ` +
+          `Please contact us directly for assistance.`,
+        costIncurred: 0,
+      };
+    }
   }
 
   // Cancel on Google Calendar if an event ID is stored
@@ -1006,6 +1190,49 @@ async function handleCancellation(
     .eq('customer_chat_id', message.chatId);
 
   console.log('[CANCEL] ✅ Appointment cancelled:', appointment.id);
+
+  // ── Waitlist: notify next person waiting for this service ────────────────
+  try {
+    const { data: nextWaiting } = await (supabase
+      .from('waitlist') as any)
+      .select('id, customer_chat_id, platform, customer_name')
+      .eq('business_id', businessId)
+      .eq('service_type', appointment.service_type)
+      .is('notified_at', null)
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (nextWaiting) {
+      // Mark them as notified
+      await (supabase.from('waitlist') as any)
+        .update({ notified_at: new Date().toISOString() })
+        .eq('id', nextWaiting.id);
+
+      const waitlistMsg =
+        `🎉 Great news! A slot just opened up for *${appointment.service_type}* ` +
+        `on *${appointment.appointment_date}* at *${appointment.appointment_time}*. ` +
+        `You were on the waitlist — reply here to confirm your booking before this slot is taken!`;
+
+      if (nextWaiting.platform === 'telegram') {
+        const { data: biz2 } = await (supabase.from('businesses') as any)
+          .select('telegram_bot_token')
+          .eq('id', businessId)
+          .single();
+        if (biz2?.telegram_bot_token) {
+          const { sendTelegramMessage } = await import('../infrastructure/telegram');
+          await sendTelegramMessage(biz2.telegram_bot_token, {
+            chatId: nextWaiting.customer_chat_id,
+            text: waitlistMsg,
+            parseMode: 'Markdown',
+          });
+        }
+      }
+      console.log('[CANCEL] ✅ Waitlist notified:', nextWaiting.customer_chat_id);
+    }
+  } catch (wlErr) {
+    console.warn('[CANCEL] Waitlist notification failed (non-fatal):', wlErr);
+  }
 
   // Notify the business owner via Telegram DM + email
   try {
@@ -1063,13 +1290,16 @@ async function handleReschedule(
   platform: string
 ): Promise<ProcessingResult> {
   const supabase = getSupabaseClient();
-  const { data: bizTzR } = await (supabase.from('businesses') as any).select('timezone').eq('id', businessId).single();
+  const { data: bizTzR } = await (supabase.from('businesses') as any)
+    .select('timezone, bot_name, bot_greeting, bot_tone')
+    .eq('id', businessId)
+    .single();
   const today = new Date().toLocaleDateString('en-CA', { timeZone: bizTzR?.timezone ?? 'Asia/Colombo' });
 
   // Find the customer's current upcoming appointment
   const { data: appointment } = await (supabase
     .from('appointments') as any)
-    .select('id, customer_name, service_type, appointment_date, appointment_time, google_event_id, status')
+    .select('id, customer_name, service_type, appointment_date, appointment_time, duration_minutes, status')
     .eq('business_id', businessId)
     .eq('customer_chat_id', message.chatId)
     .eq('status', 'scheduled')
@@ -1081,35 +1311,116 @@ async function handleReschedule(
   if (!appointment) {
     return {
       success: true,
-      response: "I couldn't find any upcoming appointments linked to this chat to reschedule. Would you like to book a new appointment instead?",
+      response: "I couldn't find any upcoming appointments linked to this chat. Would you like to book a new appointment instead?",
       costIncurred: 0,
     };
   }
 
-  // Cancel the existing appointment
-  if (appointment.google_event_id) {
-    const { cancelAppointment } = await import('../infrastructure/calendar');
-    await cancelAppointment(businessId, appointment.google_event_id);
+  // Keep the existing appointment and route into a rescheduling booking flow
+  // The booking agent is given the appointment_id and instructed to use reschedule_appointment
+  const conversation = await getOrCreateConversation(businessId, message.chatId, 'booking');
+  conversation.state.rescheduling     = true;
+  conversation.state.appointment_id   = appointment.id;
+  conversation.state.original_service = appointment.service_type;
+
+  const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY!);
+  const geminiModel = genAI.getGenerativeModel({
+    model: 'gemini-flash-latest',
+    tools: calendarToolsForGemini as any,
+  });
+  const chat = geminiModel.startChat({ history: conversation.history });
+
+  const tz = bizTzR?.timezone ?? 'Asia/Colombo';
+  const botName = bizTzR?.bot_name || 'Assistant';
+
+  const reschedulePrompt =
+    `You are ${botName}, a friendly booking assistant.
+
+The customer wants to reschedule their existing appointment:
+- Service: ${appointment.service_type}
+- Current date: ${appointment.appointment_date} at ${appointment.appointment_time}
+- Appointment ID: ${appointment.id}
+
+RESCHEDULING WORKFLOW:
+1. Ask the customer for their preferred NEW date.
+2. Call get_available_slots(date, service_name="${appointment.service_type}") to show available times.
+3. Ask the customer to pick a time slot.
+4. Call reschedule_appointment(new_date, new_time, appointment_id="${appointment.id}").
+   This patches the existing booking — do NOT call book_appointment.
+5. Confirm the new date/time to the customer.
+
+Today is: ${new Date().toLocaleDateString('en-CA', { timeZone: tz })}
+Tomorrow: ${new Date(Date.now() + 86400000).toLocaleDateString('en-CA', { timeZone: tz })}
+
+Customer message: "${message.text}"`;
+
+  let totalTokensIn = 0, totalTokensOut = 0, iterations = 0;
+  const maxIterations = 10;
+  let currentMessage = reschedulePrompt;
+
+  while (iterations < maxIterations) {
+    iterations++;
+    const result = await chat.sendMessage(currentMessage);
+    const response = result.response;
+    totalTokensIn  += response.usageMetadata?.promptTokenCount    || 0;
+    totalTokensOut += response.usageMetadata?.candidatesTokenCount || 0;
+
+    conversation.history.push(
+      { role: 'user',  parts: [{ text: currentMessage }] },
+      { role: 'model', parts: response.candidates?.[0]?.content?.parts || [] }
+    );
+
+    const functionCalls = response.functionCalls();
+    if (functionCalls && functionCalls.length > 0) {
+      const functionResponses = [];
+      let pendingSlotKeyboard: any;
+      let pendingMessengerSlots: any;
+
+      for (const call of functionCalls) {
+        const toolArgs = { ...call.args } as any;
+        if (call.name === 'reschedule_appointment') {
+          toolArgs.appointment_id = appointment.id;
+        }
+        const toolResult = await executeCalendarTool(call.name, toolArgs, businessId);
+
+        if (call.name === 'get_available_slots' && toolResult.available_slots?.length > 0) {
+          conversation.state.pending_slots = toolResult.available_slots;
+          conversation.state.pending_date  = toolArgs.date;
+          if (platform === 'messenger') {
+            pendingMessengerSlots = { date: toolArgs.date, slots: toolResult.available_slots };
+          } else {
+            const { buildSlotKeyboard } = await import('../infrastructure/telegram');
+            pendingSlotKeyboard = buildSlotKeyboard(toolResult.available_slots, toolArgs.date);
+          }
+        }
+
+        if (call.name === 'reschedule_appointment' && toolResult.success) {
+          conversation.state.rescheduling = false;
+        }
+
+        functionResponses.push({ functionResponse: { name: call.name, response: toolResult } });
+      }
+
+      await updateConversation(conversation.id, conversation.state, conversation.history);
+      currentMessage = { functionResponse: functionResponses } as any;
+      continue;
+    }
+
+    const textResponse = response.text();
+    if (textResponse) {
+      await updateConversation(conversation.id, conversation.state, conversation.history);
+      const cost = calculateActualCost('gemini-flash-latest' as any, totalTokensIn, totalTokensOut);
+      await commitCost(businessId, cost, 'gemini-flash-latest' as any, totalTokensIn, totalTokensOut);
+
+      if (platform === 'messenger') {
+        return { success: true, response: textResponse, costIncurred: cost };
+      }
+      return { success: true, response: textResponse, costIncurred: cost };
+    }
+    break;
   }
-  await (supabase.from('appointments') as any)
-    .update({ status: 'cancelled' })
-    .eq('id', appointment.id);
 
-  // Reset conversation state so the booking flow starts fresh
-  await (supabase.from('conversations') as any)
-    .update({ state: { rescheduling: true, original_service: appointment.service_type }, intent: 'booking' })
-    .eq('business_id', businessId)
-    .eq('customer_chat_id', message.chatId);
-
-  console.log('[RESCHEDULE] ✅ Old appointment cancelled, routing to booking flow');
-
-  // Synthesise a new message to feed into the booking handler
-  const rebookMessage = {
-    ...message,
-    text: `I want to reschedule my ${appointment.service_type} appointment`,
-  };
-
-  return handleBooking(rebookMessage, businessId, model, platform);
+  return { success: true, response: "I'm having trouble processing that. Please try again.", costIncurred: 0 };
 }
 
 async function handleUnknown(
