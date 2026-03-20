@@ -9,6 +9,7 @@ export default function FAQsPage() {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [newFaq, setNewFaq] = useState({ question: '', answer: '', category: 'general' });
     const [saving, setSaving] = useState(false);
+    const [deletingId, setDeletingId] = useState<string | null>(null);
     const [uploadState, setUploadState] = useState<
         'idle' | 'uploading' | 'success' | 'error'
     >('idle');
@@ -36,6 +37,7 @@ export default function FAQsPage() {
         try {
             const res = await fetch('/api/faqs', {
                 method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(newFaq),
             });
             if (res.ok) {
@@ -81,12 +83,13 @@ export default function FAQsPage() {
     }
 
     async function handleDelete(id: string) {
-        if (!confirm('Are you sure you want to delete this FAQ?')) return;
         try {
             await fetch(`/api/faqs?id=${id}`, { method: 'DELETE' });
             setFaqs(faqs.filter(f => f.id !== id));
         } catch (err) {
             alert('Failed to delete');
+        } finally {
+            setDeletingId(null);
         }
     }
 
@@ -164,10 +167,30 @@ export default function FAQsPage() {
                         <div key={faq.id} className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow">
                             <div className="flex items-start justify-between">
                                 <h3 className="text-lg font-semibold text-gray-900 mb-2">{faq.question}</h3>
-                                <div className="flex gap-2">
-                                    <button onClick={() => handleDelete(faq.id)} className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors">
-                                        <Trash2 size={18} />
-                                    </button>
+                                <div className="flex items-center gap-2">
+                                    {deletingId === faq.id ? (
+                                        <>
+                                            <button
+                                                onClick={() => handleDelete(faq.id)}
+                                                className="px-3 py-1 text-xs font-medium bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+                                            >
+                                                Delete
+                                            </button>
+                                            <button
+                                                onClick={() => setDeletingId(null)}
+                                                className="px-3 py-1 text-xs font-medium border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50 transition-colors"
+                                            >
+                                                Cancel
+                                            </button>
+                                        </>
+                                    ) : (
+                                        <button
+                                            onClick={() => setDeletingId(faq.id)}
+                                            className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                        >
+                                            <Trash2 size={18} />
+                                        </button>
+                                    )}
                                 </div>
                             </div>
                             <p className="text-gray-600 mb-4 bg-gray-50 p-3 rounded-lg border border-gray-100">{faq.answer}</p>
