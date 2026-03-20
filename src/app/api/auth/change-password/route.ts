@@ -36,7 +36,7 @@ export async function POST(req: NextRequest) {
         const { data: user, error } = await (supabase
             .from('users') as any)
             .select('id, password_hash')
-            .eq('id', session.userId)
+            .eq('id', session.id)
             .single();
 
         if (error || !user) {

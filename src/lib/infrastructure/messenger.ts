@@ -215,13 +215,11 @@ export async function getUserPages(userAccessToken: string): Promise<any[]> {
 
     try {
         console.log('[MESSENGER] Fetching user pages from Facebook...');
-        console.log('[MESSENGER] Token preview:', userAccessToken.substring(0, 20) + '...');
 
         const response = await fetch(url);
         const data = await response.json();
 
         console.log('[MESSENGER] Facebook API Response status:', response.status);
-        console.log('[MESSENGER] Facebook API Response:', JSON.stringify(data, null, 2));
 
         if (!response.ok || 'error' in data) {
             const errorMsg = data.error?.message || 'Unknown Facebook API error';

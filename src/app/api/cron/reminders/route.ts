@@ -104,8 +104,8 @@ export async function GET(req: Request) {
 
         const minutesUntil = (apptLocalDate.getTime() - nowLocal.getTime()) / 60_000;
 
-        // Send when 60–90 minutes away (30-min cron catches the window)
-        if (minutesUntil >= 55 && minutesUntil <= 95) {
+        // Send when 45–95 minutes away (wider window ensures 30-min cron never misses it)
+        if (minutesUntil >= 45 && minutesUntil <= 95) {
           const sent = await sendReminderToCustomer(
             biz.telegram_bot_token,
             appt,

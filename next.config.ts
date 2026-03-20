@@ -1,5 +1,7 @@
 import type { NextConfig } from "next";
 
+const isProd = process.env.NODE_ENV === 'production';
+
 const securityHeaders = [
   // Prevent clickjacking — page cannot be framed by third parties
   { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
@@ -18,12 +20,15 @@ const securityHeaders = [
     value: 'max-age=63072000; includeSubDomains; preload',
   },
   // Content Security Policy
-  // Allows: same-origin scripts, inline styles (required by Tailwind), Google Fonts, Supabase
+  // In production: unsafe-eval is required by the Next.js React runtime; unsafe-inline removed from scripts.
+  // In development: unsafe-inline is also enabled for fast refresh / HMR.
   {
     key: 'Content-Security-Policy',
     value: [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-eval' 'unsafe-inline'", // Next.js requires unsafe-eval in dev; tighten for prod
+      isProd
+        ? "script-src 'self' 'unsafe-eval'"
+        : "script-src 'self' 'unsafe-eval' 'unsafe-inline'",
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "font-src 'self' https://fonts.gstatic.com",
       "img-src 'self' data: https:",
