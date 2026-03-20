@@ -148,6 +148,10 @@ async function processItem(item: QueueItem): Promise<void> {
       result = await handleStatus(message, item.business_id);
       break;
 
+    case 'cancellation':
+      result = await handleCancellation(message, item.business_id);
+      break;
+
     case 'complaint':
       result = await handleComplaint(message, item.business_id, model);
       break;
@@ -565,6 +569,13 @@ async function handleBooking(
   console.log('[BOOKING] Starting tool-calling agent...');
 
   try {
+    // Fetch business timezone for date/time context
+    const { data: bizTz } = await (getSupabaseClient().from('businesses') as any)
+      .select('timezone')
+      .eq('id', businessId)
+      .single();
+    const tz = bizTz?.timezone ?? 'Asia/Colombo';
+
     // Get or create conversation
     const conversation = await getOrCreateConversation(businessId, message.chatId, 'booking');
 
@@ -610,8 +621,8 @@ WORKFLOW:
 4. Once a slot is picked, ask for name and phone number
 5. Call book_appointment when you have: date, time, customer_name, customer_phone, service_type
 
-Current date: ${new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Colombo' })}
-Tomorrow: ${new Date(Date.now() + 86400000).toLocaleDateString('en-CA', { timeZone: 'Asia/Colombo' })}
+Current date: ${new Date().toLocaleDateString('en-CA', { timeZone: tz })}
+Tomorrow: ${new Date(Date.now() + 86400000).toLocaleDateString('en-CA', { timeZone: tz })}
 
 Start by checking availability if you can determine the date.`;
     } else {
@@ -679,6 +690,30 @@ Continue helping them complete the booking. State: ${JSON.stringify(conversation
             conversation.state.appointment = toolResult;
             conversation.state.pending_slots = undefined;
             await logBookingAttempt(businessId, conversation.id, message.chatId, platform, true, iterations);
+
+            // Send booking confirmation email to the business owner
+            try {
+              const supabase = getSupabaseClient();
+              const { data: bizOwner } = await (supabase.from('businesses') as any)
+                .select('name, users:user_id (email)')
+                .eq('id', businessId)
+                .single();
+              const ownerEmail = (bizOwner?.users as any)?.email;
+              if (ownerEmail) {
+                const { sendBookingConfirmationEmail } = await import('../infrastructure/email');
+                await sendBookingConfirmationEmail({
+                  toEmail: ownerEmail,
+                  businessName: bizOwner.name,
+                  customerName: toolArgs.customer_name || 'Unknown',
+                  customerPhone: toolArgs.customer_phone || 'Unknown',
+                  serviceType: toolArgs.service_type || 'Appointment',
+                  appointmentDate: toolArgs.date || '',
+                  appointmentTime: toolArgs.time || '',
+                });
+              }
+            } catch (emailErr) {
+              console.warn('[BOOKING] Email notification failed (non-fatal):', emailErr);
+            }
           }
           if (call.name === 'book_appointment' && !toolResult.success) {
             await logBookingAttempt(businessId, conversation.id, message.chatId, platform, false, iterations, toolResult.error);
@@ -780,7 +815,8 @@ async function handleStatus(
   businessId: string
 ): Promise<ProcessingResult> {
   const supabase = getSupabaseClient();
-  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Colombo' });
+  const { data: bizTzS } = await (supabase.from('businesses') as any).select('timezone').eq('id', businessId).single();
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: bizTzS?.timezone ?? 'Asia/Colombo' });
 
   // Look up upcoming appointments linked to this chat session
   const { data: appointments } = await (supabase
@@ -830,9 +866,9 @@ async function handleComplaint(
     .eq('business_id', businessId)
     .eq('customer_chat_id', message.chatId);
 
-  // Notify the owner via Telegram DM if configured
+  // Notify the owner via Telegram DM + email if configured
   const { data: business } = await (supabase.from('businesses') as any)
-    .select('name, telegram_bot_token, owner_telegram_chat_id')
+    .select('name, telegram_bot_token, owner_telegram_chat_id, users:user_id (email)')
     .eq('id', businessId)
     .single();
 
@@ -850,10 +886,88 @@ async function handleComplaint(
     console.log('[COMPLAINT] ✅ Owner notified via Telegram DM');
   }
 
+  // Send complaint alert email to owner
+  const ownerEmail = (business?.users as any)?.email;
+  if (ownerEmail) {
+    try {
+      const { sendComplaintAlertEmail } = await import('../infrastructure/email');
+      await sendComplaintAlertEmail({
+        toEmail: ownerEmail,
+        businessName: business.name,
+        customerChatId: message.chatId,
+        platform: 'telegram',
+        messageText: message.text,
+      });
+    } catch (emailErr) {
+      console.warn('[COMPLAINT] Email notification failed (non-fatal):', emailErr);
+    }
+  }
+
   return {
     success: true,
     response:
       "I'm sorry to hear you're having an issue. Your complaint has been escalated to the team and someone will reach out to you shortly. We apologize for any inconvenience.",
+    costIncurred: 0,
+  };
+}
+
+/**
+ * Handle booking cancellation requests.
+ * Looks up the customer's most recent upcoming appointment by chat ID,
+ * cancels it on Google Calendar, and updates the DB record.
+ */
+async function handleCancellation(
+  message: { text: string; userId: string; chatId: string },
+  businessId: string
+): Promise<ProcessingResult> {
+  const supabase = getSupabaseClient();
+  const { data: bizTzC } = await (supabase.from('businesses') as any).select('timezone').eq('id', businessId).single();
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: bizTzC?.timezone ?? 'Asia/Colombo' });
+
+  // Find the customer's most recent upcoming appointment
+  const { data: appointment } = await (supabase
+    .from('appointments') as any)
+    .select('id, customer_name, service_type, appointment_date, appointment_time, google_event_id, status')
+    .eq('business_id', businessId)
+    .eq('customer_chat_id', message.chatId)
+    .eq('status', 'scheduled')
+    .gte('appointment_date', today)
+    .order('appointment_date', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (!appointment) {
+    return {
+      success: true,
+      response: "I couldn't find any upcoming appointments linked to this chat. If you believe this is an error, please contact us directly.",
+      costIncurred: 0,
+    };
+  }
+
+  // Cancel on Google Calendar if an event ID is stored
+  if (appointment.google_event_id) {
+    const { cancelAppointment } = await import('../infrastructure/calendar');
+    await cancelAppointment(businessId, appointment.google_event_id);
+  }
+
+  // Mark appointment as cancelled in the database
+  await (supabase
+    .from('appointments') as any)
+    .update({ status: 'cancelled' })
+    .eq('id', appointment.id);
+
+  // Reset the conversation booking state
+  await (supabase
+    .from('conversations') as any)
+    .update({ state: {}, intent: 'cancellation' })
+    .eq('business_id', businessId)
+    .eq('customer_chat_id', message.chatId);
+
+  console.log('[CANCEL] ✅ Appointment cancelled:', appointment.id);
+
+  return {
+    success: true,
+    response: `Your appointment for **${appointment.service_type}** on ${appointment.appointment_date} at ${appointment.appointment_time} has been successfully cancelled. If you'd like to rebook, just let me know!`,
     costIncurred: 0,
   };
 }

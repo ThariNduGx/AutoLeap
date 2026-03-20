@@ -68,6 +68,42 @@ export async function GET(request: NextRequest) {
             0
         );
 
+        // 4. Find businesses near their budget limit (>= 80% used in current month)
+        const currentMonthStart = new Date();
+        currentMonthStart.setDate(1);
+        currentMonthStart.setHours(0, 0, 0, 0);
+        const monthStartStr = currentMonthStart.toISOString().split('T')[0];
+
+        const { data: budgetData } = await (supabase
+            .from('budgets') as any)
+            .select('business_id, monthly_limit_usd, current_usage_usd');
+
+        const budgetMap = new Map<string, { limit: number; used: number }>();
+        for (const b of (budgetData || [])) {
+            if (b.monthly_limit_usd > 0) {
+                budgetMap.set(b.business_id, {
+                    limit: b.monthly_limit_usd,
+                    used: b.current_usage_usd || 0,
+                });
+            }
+        }
+
+        const nearBudgetBusinesses = bizList
+            .filter((b: any) => {
+                const budget = budgetMap.get(b.id);
+                if (!budget) return false;
+                return budget.used / budget.limit >= 0.8;
+            })
+            .map((b: any) => {
+                const budget = budgetMap.get(b.id)!;
+                return {
+                    name: b.name,
+                    usedUsd: Math.round(budget.used * 10000) / 10000,
+                    limitUsd: budget.limit,
+                    pct: Math.round((budget.used / budget.limit) * 100),
+                };
+            });
+
         return NextResponse.json({
             success: true,
             totalBusinesses,
@@ -76,6 +112,7 @@ export async function GET(request: NextRequest) {
             messages,
             totalCostUsd: Math.round(totalCostUsd * 10000) / 10000,
             recentBusinesses,
+            nearBudgetBusinesses,
         });
 
     } catch (error) {

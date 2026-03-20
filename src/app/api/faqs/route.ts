@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseClient } from '@/lib/infrastructure/supabase';
 import { storeFAQ } from '@/lib/infrastructure/embeddings';
 import { getSession, hasRole } from '@/lib/auth/session';
+import { rateLimit } from '@/lib/infrastructure/rate-limit';
 
 export const dynamic = 'force-dynamic';
 
@@ -46,6 +47,12 @@ export async function GET(req: NextRequest) {
  * SECURITY: Business ID comes from session, NOT from request
  */
 export async function POST(req: NextRequest) {
+    // 30 FAQ adds per minute per IP
+    const rl = await rateLimit(req, 'api/faqs/post', { limit: 30, windowSeconds: 60 });
+    if (!rl.allowed) {
+        return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
+    }
+
     try {
         const session = await getSession(req);
 

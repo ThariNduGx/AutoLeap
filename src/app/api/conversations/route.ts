@@ -5,8 +5,9 @@ import { getSession, hasRole } from '@/lib/auth/session';
 export const dynamic = 'force-dynamic';
 
 /**
- * GET /api/conversations
- * Returns the 50 most recent conversations for the authenticated business.
+ * GET /api/conversations?search=text&status=escalated&intent=booking&page=1
+ * Returns paginated conversations for the authenticated business.
+ * Supports searching by customer_chat_id, intent, or message content.
  */
 export async function GET(req: NextRequest) {
     const session = await getSession(req);
@@ -19,14 +20,52 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ error: 'No business' }, { status: 400 });
     }
 
+    const { searchParams } = new URL(req.url);
+    const search = searchParams.get('search')?.trim() || '';
+    const statusFilter = searchParams.get('status') || '';
+    const intentFilter = searchParams.get('intent') || '';
+    const page = Math.max(1, parseInt(searchParams.get('page') || '1'));
+    const limit = 50;
+    const offset = (page - 1) * limit;
+
     const supabase = getSupabaseClient();
 
-    const { data, error } = await (supabase
+    // If there's a message content search, delegate to DB RPC for JSONB search
+    if (search) {
+        const { data, error } = await (supabase.rpc as any)('search_conversations', {
+            p_business_id: businessId,
+            p_query: search,
+            p_limit: limit,
+            p_offset: offset,
+        });
+
+        if (error) {
+            console.error('[CONVERSATIONS] Search RPC error:', error);
+            // Fallback to simple chat_id search
+        } else {
+            return NextResponse.json(data || []);
+        }
+    }
+
+    // Standard query with optional filters
+    let query = (supabase
         .from('conversations') as any)
         .select('id, customer_chat_id, intent, status, last_message_at, created_at, history, state')
         .eq('business_id', businessId)
         .order('last_message_at', { ascending: false })
-        .limit(50);
+        .range(offset, offset + limit - 1);
+
+    if (search) {
+        query = query.ilike('customer_chat_id', `%${search}%`);
+    }
+    if (statusFilter) {
+        query = query.eq('status', statusFilter);
+    }
+    if (intentFilter) {
+        query = query.eq('intent', intentFilter);
+    }
+
+    const { data, error } = await query;
 
     if (error) {
         return NextResponse.json({ error: 'Database error' }, { status: 500 });
@@ -34,9 +73,3 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json(data || []);
 }
-
-/**
- * PATCH /api/conversations/:id
- * Toggle manual takeover (status: 'human' | 'ai')
- * Handled separately — see /api/conversations/[id]/route.ts
- */

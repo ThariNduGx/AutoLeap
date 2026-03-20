@@ -1,4 +1,4 @@
-export type IntentType = 'booking' | 'faq' | 'greeting' | 'status' | 'complaint' | 'unknown';
+export type IntentType = 'booking' | 'cancellation' | 'faq' | 'greeting' | 'status' | 'complaint' | 'unknown';
 
 interface IntentPattern {
   intent: IntentType;
@@ -13,6 +13,16 @@ const INTENT_RULES: IntentPattern[] = [
       /^(hi|hello|hey|good morning|good afternoon|good evening)/i,
     ],
     priority: 10,
+  },
+  {
+    intent: 'cancellation',
+    patterns: [
+      /^\/cancel\b/i,
+      /\b(cancel|cancell?ation)\b.*\b(appointment|booking|reservation|slot)\b/i,
+      /\b(cancel|cancell?ation)\b.*\b(my|the)\b/i,
+      /\bdon'?t.*want.*appointment\b/i,
+    ],
+    priority: 10, // Same as greeting — check before booking
   },
   {
     intent: 'booking',
@@ -97,6 +107,7 @@ export function selectModel(intent: IntentType): string {
       return 'gpt-4o-mini'; // RAG-assisted, cheap model sufficient
 
     case 'booking':
+    case 'cancellation':
     case 'complaint':
       return 'gpt-4o'; // Complex tool-calling, needs powerful model
 

@@ -28,13 +28,19 @@ export default function ConversationsPage() {
     const [conversations, setConversations] = useState<Conversation[]>([]);
     const [loading, setLoading] = useState(true);
     const [search, setSearch] = useState('');
+    const [statusFilter, setStatusFilter] = useState('');
+    const [intentFilter, setIntentFilter] = useState('');
     const [selected, setSelected] = useState<Conversation | null>(null);
     const [takingOver, setTakingOver] = useState<string | null>(null);
     const [error, setError] = useState('');
 
     const fetchConversations = useCallback(async () => {
         try {
-            const res = await fetch('/api/conversations');
+            const params = new URLSearchParams();
+            if (search) params.set('search', search);
+            if (statusFilter) params.set('status', statusFilter);
+            if (intentFilter) params.set('intent', intentFilter);
+            const res = await fetch(`/api/conversations?${params}`);
             if (!res.ok) throw new Error('Failed to load');
             const data = await res.json();
             setConversations(data);
@@ -48,7 +54,7 @@ export default function ConversationsPage() {
         } finally {
             setLoading(false);
         }
-    }, [selected]);
+    }, [selected, search, statusFilter, intentFilter]);
 
     useEffect(() => {
         fetchConversations();
@@ -74,10 +80,8 @@ export default function ConversationsPage() {
         }
     }
 
-    const filtered = conversations.filter(c =>
-        c.customer_chat_id.toLowerCase().includes(search.toLowerCase()) ||
-        c.intent.toLowerCase().includes(search.toLowerCase())
-    );
+    // Filtering is now server-side; display all returned conversations
+    const filtered = conversations;
 
     // Extract last message text from history
     function getLastMessage(conv: Conversation): string {
@@ -102,14 +106,38 @@ export default function ConversationsPage() {
                             <RefreshCw size={15} />
                         </button>
                     </div>
-                    <div className="relative">
+                    <div className="relative mb-2">
                         <Search size={14} className="absolute left-3 top-2.5 text-gray-400" />
                         <input
                             value={search}
                             onChange={e => setSearch(e.target.value)}
-                            placeholder="Search by chat ID or intent..."
+                            placeholder="Search by chat ID or message..."
                             className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
                         />
+                    </div>
+                    <div className="flex gap-2">
+                        <select
+                            value={statusFilter}
+                            onChange={e => setStatusFilter(e.target.value)}
+                            className="flex-1 px-2 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white text-gray-600"
+                        >
+                            <option value="">All statuses</option>
+                            <option value="ai">AI</option>
+                            <option value="human">Human</option>
+                            <option value="escalated">Escalated</option>
+                        </select>
+                        <select
+                            value={intentFilter}
+                            onChange={e => setIntentFilter(e.target.value)}
+                            className="flex-1 px-2 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white text-gray-600"
+                        >
+                            <option value="">All intents</option>
+                            <option value="booking">Booking</option>
+                            <option value="faq">FAQ</option>
+                            <option value="complaint">Complaint</option>
+                            <option value="greeting">Greeting</option>
+                            <option value="status">Status</option>
+                        </select>
                     </div>
                 </div>
 
