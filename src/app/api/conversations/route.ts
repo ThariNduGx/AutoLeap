@@ -56,7 +56,7 @@ export async function GET(req: NextRequest) {
     // Standard query with optional filters
     let query = (supabase
         .from('conversations') as any)
-        .select('id, customer_chat_id, intent, status, last_message_at, created_at, history, state')
+        .select('id, customer_chat_id, intent, status, last_message_at, created_at, history, state, notes, tags')
         .eq('business_id', businessId)
         .order('last_message_at', { ascending: false })
         .range(offset, offset + limit - 1);

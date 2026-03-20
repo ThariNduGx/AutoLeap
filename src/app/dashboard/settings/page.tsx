@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import {
     Building2, MessageSquare, Facebook, User, Shield, Save, Loader2,
     CheckCircle2, XCircle, X, Eye, EyeOff, Calendar, Clock, Globe,
-    AlertTriangle, DollarSign,
+    AlertTriangle, DollarSign, TimerOff,
 } from 'lucide-react';
 
 // IANA timezone list (subset — most common zones)
@@ -64,6 +64,7 @@ interface BusinessSettings {
     google_calendar_email: string | null;
     timezone: string;
     business_hours: BusinessHours | null;
+    cancellation_window_hours: number;
 }
 
 /** Inline "are you sure?" confirmation button component */
@@ -137,6 +138,11 @@ export default function SettingsPage() {
     const [savingHours, setSavingHours] = useState(false);
     const [hoursSaved, setHoursSaved] = useState(false);
 
+    // Cancellation window
+    const [cancelWindow, setCancelWindow] = useState('0');
+    const [savingCancelWindow, setSavingCancelWindow] = useState(false);
+    const [cancelWindowSaved, setCancelWindowSaved] = useState(false);
+
     // Budget
     const [monthlyBudget, setMonthlyBudget] = useState('10');
     const [currentUsage, setCurrentUsage] = useState(0);
@@ -169,6 +175,7 @@ export default function SettingsPage() {
                 setOwnerChatId(data.business.owner_telegram_chat_id || '');
                 setTimezone(data.business.timezone || 'Asia/Colombo');
                 setBusinessHours(data.business.business_hours || DEFAULT_HOURS);
+                setCancelWindow(String(data.business.cancellation_window_hours ?? 0));
             }
             if (budgetRes.ok) {
                 const bud = await budgetRes.json();
@@ -270,6 +277,21 @@ export default function SettingsPage() {
             ...prev,
             [day]: { ...prev[day], [field]: value },
         }));
+    }
+
+    async function handleSaveCancelWindow() {
+        const hours = parseInt(cancelWindow, 10);
+        if (isNaN(hours) || hours < 0 || hours > 168) return;
+        setSavingCancelWindow(true);
+        setCancelWindowSaved(false);
+        try {
+            if (await patchSettings({ cancellation_window_hours: hours })) {
+                setCancelWindowSaved(true);
+                setTimeout(() => setCancelWindowSaved(false), 3000);
+            }
+        } finally {
+            setSavingCancelWindow(false);
+        }
     }
 
     async function handleChangePassword() {
@@ -497,6 +519,47 @@ export default function SettingsPage() {
                                     </div>
                                 ))}
                             </div>
+                        </div>
+                    </div>
+                </div>
+
+                {/* ── Cancellation Policy ── */}
+                <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+                    <div className="flex items-center gap-3 mb-6">
+                        <div className="w-10 h-10 rounded-full bg-rose-100 flex items-center justify-center">
+                            <TimerOff size={20} className="text-rose-600" />
+                        </div>
+                        <div>
+                            <h2 className="text-lg font-semibold text-gray-900">Cancellation Policy</h2>
+                            <p className="text-sm text-gray-500">Prevent last-minute self-cancellations via the bot</p>
+                        </div>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Minimum notice required to cancel (hours)
+                        </label>
+                        <p className="text-xs text-gray-400 mb-3">
+                            Set to 0 to allow cancellations at any time. If set to e.g. 24, customers cannot cancel within 24 hours of their appointment — the bot will ask them to contact you directly.
+                        </p>
+                        <div className="flex items-center gap-3">
+                            <input
+                                type="number"
+                                min={0}
+                                max={168}
+                                step={1}
+                                value={cancelWindow}
+                                onChange={e => setCancelWindow(e.target.value)}
+                                className="w-32 px-4 py-2 border border-gray-300 rounded-lg text-gray-900 outline-none focus:ring-2 focus:ring-indigo-500"
+                            />
+                            <span className="text-sm text-gray-500">hours</span>
+                            <button
+                                onClick={handleSaveCancelWindow}
+                                disabled={savingCancelWindow || parseInt(cancelWindow) === business?.cancellation_window_hours}
+                                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg flex items-center gap-2 disabled:opacity-50 transition-colors"
+                            >
+                                {savingCancelWindow ? <Loader2 size={14} className="animate-spin" /> : cancelWindowSaved ? <CheckCircle2 size={14} /> : <Save size={14} />}
+                                {cancelWindowSaved ? 'Saved!' : 'Save'}
+                            </button>
                         </div>
                     </div>
                 </div>

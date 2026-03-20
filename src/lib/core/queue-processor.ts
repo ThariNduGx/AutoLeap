@@ -608,12 +608,32 @@ async function handleBooking(
   console.log('[BOOKING] Starting tool-calling agent...');
 
   try {
-    // Fetch business timezone for date/time context
-    const { data: bizTz } = await (getSupabaseClient().from('businesses') as any)
-      .select('timezone')
-      .eq('id', businessId)
-      .single();
+    // Fetch business timezone and active services
+    const [{ data: bizTz }, { data: serviceRows }] = await Promise.all([
+      (getSupabaseClient().from('businesses') as any)
+        .select('timezone')
+        .eq('id', businessId)
+        .single(),
+      (getSupabaseClient().from('services') as any)
+        .select('name, description, duration_minutes, price')
+        .eq('business_id', businessId)
+        .eq('is_active', true)
+        .order('sort_order', { ascending: true })
+        .order('created_at', { ascending: true }),
+    ]);
     const tz = bizTz?.timezone ?? 'Asia/Colombo';
+
+    // Build a readable services menu to inject into the system prompt
+    const servicesMenu = (serviceRows && serviceRows.length > 0)
+      ? `\n\nAVAILABLE SERVICES:\n` +
+        (serviceRows as any[]).map((s: any, i: number) => {
+          let line = `${i + 1}. ${s.name} (${s.duration_minutes} min)`;
+          if (s.price != null) line += ` — $${Number(s.price).toFixed(2)}`;
+          if (s.description) line += `\n   ${s.description}`;
+          return line;
+        }).join('\n') +
+        `\n\nIf the customer hasn't specified a service, present this menu and ask them to choose one before proceeding.`
+      : '';
 
     // Get or create conversation
     const conversation = await getOrCreateConversation(businessId, message.chatId, 'booking');
@@ -650,16 +670,17 @@ async function handleBooking(
       conversation.state.selected_date = date;
       conversation.state.selected_time = time;
     } else if (isFirstMessage) {
-      currentMessage = `You are a booking assistant for a Sri Lankan service business.
+      currentMessage = `You are a booking assistant for a Sri Lankan service business.${servicesMenu}
 
 Customer message: "${message.text}"
 
 WORKFLOW:
-1. Extract info from message (service, date, time, name, phone)
-2. If you have a date, call get_available_slots to check availability
-3. The system will show available slots as buttons — just ask the customer to pick one
-4. Once a slot is picked, ask for name and phone number
-5. Call book_appointment when you have: date, time, customer_name, customer_phone, service_type
+1. If services are listed above and no service is selected yet, present the menu and ask the customer to choose
+2. Extract info from message (service, date, time, name, phone)
+3. If you have a date, call get_available_slots to check availability
+4. The system will show available slots as buttons — just ask the customer to pick one
+5. Once a slot is picked, ask for name and phone number
+6. Call book_appointment when you have: date, time, customer_name, customer_phone, service_type
 
 Current date: ${new Date().toLocaleDateString('en-CA', { timeZone: tz })}
 Tomorrow: ${new Date(Date.now() + 86400000).toLocaleDateString('en-CA', { timeZone: tz })}
@@ -963,8 +984,12 @@ async function handleCancellation(
   businessId: string
 ): Promise<ProcessingResult> {
   const supabase = getSupabaseClient();
-  const { data: bizTzC } = await (supabase.from('businesses') as any).select('timezone').eq('id', businessId).single();
-  const today = new Date().toLocaleDateString('en-CA', { timeZone: bizTzC?.timezone ?? 'Asia/Colombo' });
+  const { data: bizTzC } = await (supabase.from('businesses') as any)
+    .select('timezone, cancellation_window_hours')
+    .eq('id', businessId)
+    .single();
+  const tz = bizTzC?.timezone ?? 'Asia/Colombo';
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: tz });
 
   // Find the customer's most recent upcoming appointment
   const { data: appointment } = await (supabase
@@ -984,6 +1009,28 @@ async function handleCancellation(
       response: "I couldn't find any upcoming appointments linked to this chat. If you believe this is an error, please contact us directly.",
       costIncurred: 0,
     };
+  }
+
+  // ── Cancellation grace-period check ──────────────────────────────────────
+  const windowHours: number = bizTzC?.cancellation_window_hours ?? 0;
+  if (windowHours > 0) {
+    // Build a Date from the appointment's date + time in the business timezone
+    const apptDateTimeStr = `${appointment.appointment_date}T${appointment.appointment_time}`;
+    // Parse as local date in the business timezone
+    const apptEpoch = new Date(apptDateTimeStr).getTime();
+    const nowEpoch = Date.now();
+    const hoursUntilAppt = (apptEpoch - nowEpoch) / 3_600_000;
+
+    if (hoursUntilAppt >= 0 && hoursUntilAppt < windowHours) {
+      return {
+        success: true,
+        response:
+          `I'm sorry, but cancellations must be made at least **${windowHours} hour${windowHours !== 1 ? 's' : ''}** before the appointment. ` +
+          `Your appointment is in approximately ${Math.ceil(hoursUntilAppt)} hour(s), so it can no longer be cancelled online. ` +
+          `Please contact us directly for assistance.`,
+        costIncurred: 0,
+      };
+    }
   }
 
   // Cancel on Google Calendar if an event ID is stored
@@ -1006,6 +1053,49 @@ async function handleCancellation(
     .eq('customer_chat_id', message.chatId);
 
   console.log('[CANCEL] ✅ Appointment cancelled:', appointment.id);
+
+  // ── Waitlist: notify next person waiting for this service ────────────────
+  try {
+    const { data: nextWaiting } = await (supabase
+      .from('waitlist') as any)
+      .select('id, customer_chat_id, platform, customer_name')
+      .eq('business_id', businessId)
+      .eq('service_type', appointment.service_type)
+      .is('notified_at', null)
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (nextWaiting) {
+      // Mark them as notified
+      await (supabase.from('waitlist') as any)
+        .update({ notified_at: new Date().toISOString() })
+        .eq('id', nextWaiting.id);
+
+      const waitlistMsg =
+        `🎉 Great news! A slot just opened up for *${appointment.service_type}* ` +
+        `on *${appointment.appointment_date}* at *${appointment.appointment_time}*. ` +
+        `You were on the waitlist — reply here to confirm your booking before this slot is taken!`;
+
+      if (nextWaiting.platform === 'telegram') {
+        const { data: biz2 } = await (supabase.from('businesses') as any)
+          .select('telegram_bot_token')
+          .eq('id', businessId)
+          .single();
+        if (biz2?.telegram_bot_token) {
+          const { sendTelegramMessage } = await import('../infrastructure/telegram');
+          await sendTelegramMessage(biz2.telegram_bot_token, {
+            chatId: nextWaiting.customer_chat_id,
+            text: waitlistMsg,
+            parseMode: 'Markdown',
+          });
+        }
+      }
+      console.log('[CANCEL] ✅ Waitlist notified:', nextWaiting.customer_chat_id);
+    }
+  } catch (wlErr) {
+    console.warn('[CANCEL] Waitlist notification failed (non-fatal):', wlErr);
+  }
 
   // Notify the business owner via Telegram DM + email
   try {

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Search, MessageSquare, Bot, User, RefreshCw, AlertTriangle, CheckCircle, ShieldAlert, Send, Loader2, Download } from 'lucide-react';
+import { Search, MessageSquare, Bot, User, RefreshCw, AlertTriangle, CheckCircle, ShieldAlert, Send, Loader2, Download, StickyNote, Tag, X as XIcon, Plus } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 
 interface Conversation {
@@ -13,6 +13,8 @@ interface Conversation {
     created_at: string;
     history: any[];
     state: any;
+    notes: string | null;
+    tags: string[];
 }
 
 const INTENT_COLORS: Record<string, string> = {
@@ -39,6 +41,13 @@ export default function ConversationsPage() {
     const [sending, setSending] = useState(false);
     const [replyError, setReplyError] = useState('');
     const msgEndRef = useRef<HTMLDivElement>(null);
+
+    // Notes & tags state
+    const [notes, setNotes] = useState('');
+    const [savingNotes, setSavingNotes] = useState(false);
+    const [notesSaved, setNotesSaved] = useState(false);
+    const [newTag, setNewTag] = useState('');
+    const [savingTags, setSavingTags] = useState(false);
 
     const fetchConversations = useCallback(async () => {
         try {
@@ -106,6 +115,61 @@ export default function ConversationsPage() {
             }
         } finally {
             setTakingOver(null);
+        }
+    }
+
+    async function saveNotes() {
+        if (!selected || savingNotes) return;
+        setSavingNotes(true);
+        setNotesSaved(false);
+        try {
+            const res = await fetch(`/api/conversations/${selected.id}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ notes: notes || null }),
+            });
+            if (res.ok) {
+                setNotesSaved(true);
+                setTimeout(() => setNotesSaved(false), 2500);
+                await fetchConversations();
+            }
+        } finally {
+            setSavingNotes(false);
+        }
+    }
+
+    async function addTag() {
+        if (!selected || !newTag.trim()) return;
+        const tag = newTag.trim().toLowerCase().replace(/\s+/g, '-');
+        const existing = selected.tags || [];
+        if (existing.includes(tag)) { setNewTag(''); return; }
+        const updated = [...existing, tag];
+        setSavingTags(true);
+        try {
+            const res = await fetch(`/api/conversations/${selected.id}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tags: updated }),
+            });
+            if (res.ok) { setNewTag(''); await fetchConversations(); }
+        } finally {
+            setSavingTags(false);
+        }
+    }
+
+    async function removeTag(tag: string) {
+        if (!selected) return;
+        const updated = (selected.tags || []).filter((t: string) => t !== tag);
+        setSavingTags(true);
+        try {
+            const res = await fetch(`/api/conversations/${selected.id}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tags: updated }),
+            });
+            if (res.ok) await fetchConversations();
+        } finally {
+            setSavingTags(false);
         }
     }
 
@@ -194,7 +258,7 @@ export default function ConversationsPage() {
                         filtered.map(conv => (
                             <button
                                 key={conv.id}
-                                onClick={() => { setSelected(conv); setReplyError(''); setReplyText(''); }}
+                                onClick={() => { setSelected(conv); setReplyError(''); setReplyText(''); setNotes(conv.notes ?? ''); setNewTag(''); setNotesSaved(false); }}
                                 className={`w-full text-left p-4 border-b border-gray-50 hover:bg-gray-50 transition-colors ${selected?.id === conv.id ? 'bg-indigo-50 border-l-4 border-l-indigo-500' : ''}`}
                             >
                                 <div className="flex items-start justify-between gap-2 mb-1">
@@ -323,6 +387,70 @@ export default function ConversationsPage() {
                                 Escalated — customer flagged a complaint. AI is paused.
                             </div>
                         )}
+
+                        {/* ── Notes & Tags ── */}
+                        <div className="border-t border-gray-100 bg-gray-50/50 px-4 py-3 space-y-3">
+                            {/* Notes */}
+                            <div>
+                                <div className="flex items-center justify-between mb-1.5">
+                                    <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1">
+                                        <StickyNote size={11} /> Internal Notes
+                                    </label>
+                                    <button
+                                        onClick={saveNotes}
+                                        disabled={savingNotes || notes === (selected.notes ?? '')}
+                                        className="text-xs text-indigo-600 hover:text-indigo-800 disabled:opacity-40 font-medium flex items-center gap-1"
+                                    >
+                                        {savingNotes ? <Loader2 size={10} className="animate-spin" /> : null}
+                                        {notesSaved ? 'Saved!' : 'Save'}
+                                    </button>
+                                </div>
+                                <textarea
+                                    value={notes}
+                                    onChange={e => setNotes(e.target.value)}
+                                    placeholder="Private notes visible only to you (not sent to customer)…"
+                                    rows={2}
+                                    className="w-full px-3 py-2 text-xs border border-gray-200 rounded-lg resize-none outline-none focus:ring-2 focus:ring-indigo-400 bg-white"
+                                />
+                            </div>
+
+                            {/* Tags */}
+                            <div>
+                                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1 mb-1.5">
+                                    <Tag size={11} /> Tags
+                                </label>
+                                <div className="flex flex-wrap gap-1.5 mb-2">
+                                    {(selected.tags || []).map((t: string) => (
+                                        <span key={t} className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-100 text-indigo-700 text-xs rounded-full font-medium">
+                                            {t}
+                                            <button onClick={() => removeTag(t)} className="hover:text-indigo-900" disabled={savingTags}>
+                                                <XIcon size={10} />
+                                            </button>
+                                        </span>
+                                    ))}
+                                    {(selected.tags || []).length === 0 && (
+                                        <span className="text-xs text-gray-400 italic">No tags yet</span>
+                                    )}
+                                </div>
+                                <div className="flex gap-1.5">
+                                    <input
+                                        value={newTag}
+                                        onChange={e => setNewTag(e.target.value)}
+                                        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addTag(); } }}
+                                        placeholder="Add tag…"
+                                        maxLength={32}
+                                        className="flex-1 px-2 py-1 text-xs border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-indigo-400 bg-white"
+                                    />
+                                    <button
+                                        onClick={addTag}
+                                        disabled={!newTag.trim() || savingTags}
+                                        className="px-2 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg disabled:opacity-40 transition-colors"
+                                    >
+                                        {savingTags ? <Loader2 size={11} className="animate-spin" /> : <Plus size={11} />}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
 
                         {/* Human-mode reply box */}
                         {(selected.status === 'human' || selected.status === 'escalated') && (

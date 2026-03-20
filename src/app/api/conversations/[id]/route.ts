@@ -23,31 +23,52 @@ export async function PATCH(
     }
 
     const body = await req.json();
-    const newStatus: string = body.status;
-
-    const ALLOWED_STATUSES = ['ai', 'human', 'escalated'];
-    if (!ALLOWED_STATUSES.includes(newStatus)) {
-        return NextResponse.json(
-            { error: `Invalid status. Allowed: ${ALLOWED_STATUSES.join(', ')}` },
-            { status: 400 }
-        );
-    }
 
     const supabase = getSupabaseClient();
+    const updates: Record<string, unknown> = {};
 
-    // Update in one query, scoped to this business for security
+    // Status toggle
+    if ('status' in body) {
+        const ALLOWED_STATUSES = ['ai', 'human', 'escalated'];
+        if (!ALLOWED_STATUSES.includes(body.status)) {
+            return NextResponse.json(
+                { error: `Invalid status. Allowed: ${ALLOWED_STATUSES.join(', ')}` },
+                { status: 400 }
+            );
+        }
+        updates.status = body.status;
+    }
+
+    // Internal notes (owner-only, never sent to customer)
+    if ('notes' in body) {
+        updates.notes = body.notes ?? null;
+    }
+
+    // Tags array (e.g. ["vip", "follow-up"])
+    if ('tags' in body) {
+        if (!Array.isArray(body.tags)) {
+            return NextResponse.json({ error: 'tags must be an array' }, { status: 400 });
+        }
+        updates.tags = body.tags.map((t: unknown) => String(t).trim()).filter(Boolean);
+    }
+
+    if (Object.keys(updates).length === 0) {
+        return NextResponse.json({ error: 'No valid fields' }, { status: 400 });
+    }
+
+    // Update scoped to this business for security
     const { data, error } = await (supabase
         .from('conversations') as any)
-        .update({ status: newStatus })
+        .update(updates)
         .eq('id', params.id)
         .eq('business_id', businessId)
-        .select('id, status')
+        .select('id, status, notes, tags')
         .single();
 
     if (error || !data) {
         return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
 
-    console.log(`[CONVERSATIONS] Status → ${newStatus} for conv ${params.id}`);
-    return NextResponse.json({ success: true, status: data.status });
+    console.log(`[CONVERSATIONS] Updated conv ${params.id}:`, Object.keys(updates));
+    return NextResponse.json({ success: true, ...data });
 }
