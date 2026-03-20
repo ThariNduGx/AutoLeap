@@ -75,10 +75,19 @@ export function classifyIntent(message: string): IntentType {
 }
 
 /**
- * Determine which model to use based on intent.
+ * Determine which model to use based on intent and the active provider.
  * Cheap models for simple tasks, powerful models for complex ones.
+ * Returns the correct model name for cost tracking.
  */
-export function selectModel(intent: IntentType): 'gpt-4o-mini' | 'gpt-4o' {
+export function selectModel(intent: IntentType): string {
+  // When running in Gemini dev mode, all completions use gemini-flash-latest.
+  // Returning the correct name here ensures cost-tracker records $0 (free tier),
+  // not incorrect OpenAI pricing.
+  const useGemini = process.env.USE_GEMINI_FOR_DEV === 'true';
+  if (useGemini) {
+    return 'gemini-flash-latest';
+  }
+
   switch (intent) {
     case 'greeting':
     case 'status':

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Building2, MessageSquare, Facebook, User, Shield, Save, Loader2, CheckCircle2, XCircle } from 'lucide-react';
+import { Building2, MessageSquare, Facebook, User, Shield, Save, Loader2, CheckCircle2, XCircle, X, Eye, EyeOff } from 'lucide-react';
 
 interface BusinessSettings {
     id: string;
@@ -16,9 +16,25 @@ export default function SettingsPage() {
     const [business, setBusiness] = useState<BusinessSettings | null>(null);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
+
+    // Business name editing
+    const [businessName, setBusinessName] = useState('');
+    const [savingName, setSavingName] = useState(false);
+    const [nameSaved, setNameSaved] = useState(false);
+
+    // Owner Telegram chat ID
     const [ownerChatId, setOwnerChatId] = useState('');
     const [savingChatId, setSavingChatId] = useState(false);
     const [chatIdSaved, setChatIdSaved] = useState(false);
+
+    // Change password modal
+    const [showPasswordModal, setShowPasswordModal] = useState(false);
+    const [passwordForm, setPasswordForm] = useState({ current: '', next: '', confirm: '' });
+    const [passwordError, setPasswordError] = useState('');
+    const [passwordSuccess, setPasswordSuccess] = useState(false);
+    const [savingPassword, setSavingPassword] = useState(false);
+    const [showCurrent, setShowCurrent] = useState(false);
+    const [showNext, setShowNext] = useState(false);
 
     useEffect(() => {
         fetchBusinessSettings();
@@ -30,12 +46,33 @@ export default function SettingsPage() {
             const data = await res.json();
             if (data.success) {
                 setBusiness(data.business);
+                setBusinessName(data.business.name || '');
                 setOwnerChatId(data.business.owner_telegram_chat_id || '');
             }
         } catch (error) {
             console.error('Failed to fetch settings:', error);
         } finally {
             setLoading(false);
+        }
+    }
+
+    async function handleSaveBusinessName() {
+        if (!businessName.trim()) return;
+        setSavingName(true);
+        setNameSaved(false);
+        try {
+            const res = await fetch('/api/business/settings', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: businessName.trim() }),
+            });
+            if (res.ok) {
+                setNameSaved(true);
+                fetchBusinessSettings();
+                setTimeout(() => setNameSaved(false), 3000);
+            }
+        } finally {
+            setSavingName(false);
         }
     }
 
@@ -57,21 +94,50 @@ export default function SettingsPage() {
         }
     }
 
+    async function handleChangePassword() {
+        setPasswordError('');
+        if (passwordForm.next !== passwordForm.confirm) {
+            setPasswordError('New passwords do not match');
+            return;
+        }
+        if (passwordForm.next.length < 8) {
+            setPasswordError('New password must be at least 8 characters');
+            return;
+        }
+        setSavingPassword(true);
+        try {
+            const res = await fetch('/api/auth/change-password', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ current_password: passwordForm.current, new_password: passwordForm.next }),
+            });
+            const data = await res.json();
+            if (res.ok) {
+                setPasswordSuccess(true);
+                setPasswordForm({ current: '', next: '', confirm: '' });
+                setTimeout(() => {
+                    setPasswordSuccess(false);
+                    setShowPasswordModal(false);
+                }, 2000);
+            } else {
+                setPasswordError(data.error || 'Failed to change password');
+            }
+        } finally {
+            setSavingPassword(false);
+        }
+    }
+
     async function handleDisconnectFacebook() {
         if (!confirm('Are you sure you want to disconnect your Facebook Page?')) return;
-
         setSaving(true);
         try {
-            const res = await fetch('/api/business/settings/facebook/disconnect', {
-                method: 'POST',
-            });
-
+            const res = await fetch('/api/business/settings/facebook/disconnect', { method: 'POST' });
             if (res.ok) {
-                fetchBusinessSettings(); // Refresh
+                fetchBusinessSettings();
             } else {
                 alert('Failed to disconnect Facebook Page');
             }
-        } catch (error) {
+        } catch {
             alert('Error disconnecting Facebook Page');
         } finally {
             setSaving(false);
@@ -80,19 +146,15 @@ export default function SettingsPage() {
 
     async function handleDisconnectTelegram() {
         if (!confirm('Are you sure you want to disconnect your Telegram bot?')) return;
-
         setSaving(true);
         try {
-            const res = await fetch('/api/telegram/disconnect', {
-                method: 'POST',
-            });
-
+            const res = await fetch('/api/telegram/disconnect', { method: 'POST' });
             if (res.ok) {
-                fetchBusinessSettings(); // Refresh
+                fetchBusinessSettings();
             } else {
                 alert('Failed to disconnect Telegram bot');
             }
-        } catch (error) {
+        } catch {
             alert('Error disconnecting Telegram bot');
         } finally {
             setSaving(false);
@@ -132,12 +194,23 @@ export default function SettingsPage() {
                     <div className="space-y-4">
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-2">Business Name</label>
-                            <input
-                                type="text"
-                                value={business?.name || ''}
-                                disabled
-                                className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 text-gray-600"
-                            />
+                            <div className="flex gap-2">
+                                <input
+                                    type="text"
+                                    value={businessName}
+                                    onChange={e => setBusinessName(e.target.value)}
+                                    maxLength={120}
+                                    className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-gray-900 outline-none focus:ring-2 focus:ring-indigo-500"
+                                />
+                                <button
+                                    onClick={handleSaveBusinessName}
+                                    disabled={savingName || !businessName.trim() || businessName.trim() === business?.name}
+                                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg flex items-center gap-2 disabled:opacity-50 transition-colors"
+                                >
+                                    {savingName ? <Loader2 size={14} className="animate-spin" /> : nameSaved ? <CheckCircle2 size={14} /> : <Save size={14} />}
+                                    {nameSaved ? 'Saved!' : 'Save'}
+                                </button>
+                            </div>
                         </div>
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-2">Business ID</label>
@@ -306,17 +379,117 @@ export default function SettingsPage() {
                     </div>
 
                     <div className="space-y-3">
-                        <button className="w-full text-left p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
+                        <button
+                            onClick={() => { setShowPasswordModal(true); setPasswordError(''); setPasswordSuccess(false); }}
+                            className="w-full text-left p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+                        >
                             <h3 className="font-medium text-gray-900">Change Password</h3>
                             <p className="text-sm text-gray-500 mt-1">Update your account password</p>
-                        </button>
-                        <button className="w-full text-left p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
-                            <h3 className="font-medium text-gray-900">Email Notifications</h3>
-                            <p className="text-sm text-gray-500 mt-1">Manage notification preferences</p>
                         </button>
                     </div>
                 </div>
             </div>
+
+            {/* Change Password Modal */}
+            {showPasswordModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+                    <div className="bg-white rounded-2xl shadow-xl w-full max-w-md mx-4 p-6">
+                        <div className="flex items-center justify-between mb-6">
+                            <h2 className="text-lg font-semibold text-gray-900">Change Password</h2>
+                            <button
+                                onClick={() => setShowPasswordModal(false)}
+                                className="p-1 rounded-lg hover:bg-gray-100 transition-colors"
+                            >
+                                <X size={20} className="text-gray-500" />
+                            </button>
+                        </div>
+
+                        {passwordSuccess ? (
+                            <div className="flex flex-col items-center py-6 gap-3">
+                                <CheckCircle2 size={40} className="text-green-500" />
+                                <p className="text-gray-700 font-medium">Password updated successfully!</p>
+                            </div>
+                        ) : (
+                            <div className="space-y-4">
+                                {/* Current Password */}
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Current Password</label>
+                                    <div className="relative">
+                                        <input
+                                            type={showCurrent ? 'text' : 'password'}
+                                            value={passwordForm.current}
+                                            onChange={e => setPasswordForm(f => ({ ...f, current: e.target.value }))}
+                                            className="w-full px-4 py-2 border border-gray-300 rounded-lg pr-10 outline-none focus:ring-2 focus:ring-indigo-500"
+                                            placeholder="Enter current password"
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowCurrent(v => !v)}
+                                            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                                        >
+                                            {showCurrent ? <EyeOff size={16} /> : <Eye size={16} />}
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {/* New Password */}
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">New Password</label>
+                                    <div className="relative">
+                                        <input
+                                            type={showNext ? 'text' : 'password'}
+                                            value={passwordForm.next}
+                                            onChange={e => setPasswordForm(f => ({ ...f, next: e.target.value }))}
+                                            className="w-full px-4 py-2 border border-gray-300 rounded-lg pr-10 outline-none focus:ring-2 focus:ring-indigo-500"
+                                            placeholder="At least 8 characters"
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowNext(v => !v)}
+                                            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                                        >
+                                            {showNext ? <EyeOff size={16} /> : <Eye size={16} />}
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {/* Confirm New Password */}
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Confirm New Password</label>
+                                    <input
+                                        type="password"
+                                        value={passwordForm.confirm}
+                                        onChange={e => setPasswordForm(f => ({ ...f, confirm: e.target.value }))}
+                                        className="w-full px-4 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-indigo-500"
+                                        placeholder="Repeat new password"
+                                    />
+                                </div>
+
+                                {passwordError && (
+                                    <p className="text-sm text-red-600">{passwordError}</p>
+                                )}
+
+                                <div className="flex gap-3 pt-2">
+                                    <button
+                                        onClick={() => setShowPasswordModal(false)}
+                                        className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        onClick={handleChangePassword}
+                                        disabled={savingPassword || !passwordForm.current || !passwordForm.next || !passwordForm.confirm}
+                                        className="flex-1 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg flex items-center justify-center gap-2 disabled:opacity-50 transition-colors"
+                                    >
+                                        {savingPassword ? <Loader2 size={14} className="animate-spin" /> : null}
+                                        {savingPassword ? 'Saving...' : 'Update Password'}
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

@@ -610,8 +610,8 @@ WORKFLOW:
 4. Once a slot is picked, ask for name and phone number
 5. Call book_appointment when you have: date, time, customer_name, customer_phone, service_type
 
-Current date: ${new Date().toISOString().split('T')[0]}
-Tomorrow: ${new Date(Date.now() + 86400000).toISOString().split('T')[0]}
+Current date: ${new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Colombo' })}
+Tomorrow: ${new Date(Date.now() + 86400000).toLocaleDateString('en-CA', { timeZone: 'Asia/Colombo' })}
 
 Start by checking availability if you can determine the date.`;
     } else {
@@ -780,7 +780,7 @@ async function handleStatus(
   businessId: string
 ): Promise<ProcessingResult> {
   const supabase = getSupabaseClient();
-  const today = new Date().toISOString().split('T')[0];
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Colombo' });
 
   // Look up upcoming appointments linked to this chat session
   const { data: appointments } = await (supabase

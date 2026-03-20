@@ -69,10 +69,10 @@ export async function getAvailableSlots(
   if (!auth) return [];
 
   try {
-    // ... API Fetch Logic (same as before) ...
-    // Get start and end of day
-    const dayStart = new Date(`${date}T${businessHours.start}:00`);
-    const dayEnd = new Date(`${date}T${businessHours.end}:00`);
+    // Get start and end of day — use +05:30 offset so dates are interpreted
+    // in Asia/Colombo time regardless of the server's local timezone (UTC on Vercel).
+    const dayStart = new Date(`${date}T${businessHours.start}:00+05:30`);
+    const dayEnd = new Date(`${date}T${businessHours.end}:00+05:30`);
 
     console.log('[CALENDAR] 🔄 API Call: Checking availability for', date);
 
@@ -97,9 +97,9 @@ export async function getAvailableSlots(
       currentTime.setHours(currentTime.getHours() + 1);
     }
 
-    // Filter out busy slots
+    // Filter out busy slots — use +05:30 to match the freebusy query timezone
     const availableSlots = allSlots.filter((slot) => {
-      const slotStart = new Date(`${date}T${slot}:00`);
+      const slotStart = new Date(`${date}T${slot}:00+05:30`);
       const slotEnd = new Date(slotStart.getTime() + 60 * 60 * 1000); // +1 hour
 
       // Check if slot overlaps with any busy time
@@ -150,7 +150,8 @@ export async function createAppointment(
   }
 
   try {
-    const startDateTime = new Date(`${details.date}T${details.time}:00`);
+    // Use +05:30 so the event is created in Asia/Colombo time (matches timeZone field below)
+    const startDateTime = new Date(`${details.date}T${details.time}:00+05:30`);
     const endDateTime = new Date(startDateTime.getTime() + details.duration * 60 * 1000);
 
     console.log('[CALENDAR] Creating appointment:', details);

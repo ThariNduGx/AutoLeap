@@ -36,9 +36,9 @@ export async function GET(request: NextRequest) {
             .eq('id', businessId)
             .single();
 
-        // Count FAQs
+        // Count FAQs (stored in faq_documents, not faqs)
         const { count: faqCount } = await (supabase
-            .from('faqs') as any)
+            .from('faq_documents') as any)
             .select('*', { count: 'exact', head: true })
             .eq('business_id', businessId);
 

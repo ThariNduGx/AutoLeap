@@ -49,7 +49,7 @@ export async function GET(request: NextRequest) {
             (businesses || []).map(async (business: any) => {
                 // Count FAQs and completed messages in parallel
                 const [faqRes, msgRes] = await Promise.all([
-                    (supabase.from('faqs') as any)
+                    (supabase.from('faq_documents') as any)
                         .select('*', { count: 'exact', head: true })
                         .eq('business_id', business.id),
                     (supabase.from('request_queue') as any)

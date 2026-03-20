@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Search, MessageSquare, Bot, User, RefreshCw, AlertTriangle, CheckCircle } from 'lucide-react';
+import { Search, MessageSquare, Bot, User, RefreshCw, AlertTriangle, CheckCircle, ShieldAlert } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 
 interface Conversation {
@@ -132,7 +132,9 @@ export default function ConversationsPage() {
                             >
                                 <div className="flex items-start justify-between gap-2 mb-1">
                                     <div className="flex items-center gap-2 min-w-0">
-                                        {conv.status === 'human' ? (
+                                        {conv.status === 'escalated' ? (
+                                            <ShieldAlert size={14} className="text-red-500 shrink-0" />
+                                        ) : conv.status === 'human' ? (
                                             <User size={14} className="text-orange-500 shrink-0" />
                                         ) : (
                                             <Bot size={14} className="text-indigo-500 shrink-0" />
@@ -179,7 +181,19 @@ export default function ConversationsPage() {
                         {/* Header */}
                         <div className="p-4 border-b border-gray-100 flex items-center justify-between">
                             <div>
-                                <p className="font-semibold text-gray-900 font-mono">{selected.customer_chat_id}</p>
+                                <div className="flex items-center gap-2">
+                                    <p className="font-semibold text-gray-900 font-mono">{selected.customer_chat_id}</p>
+                                    {selected.status === 'escalated' && (
+                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-red-100 text-red-700 text-xs font-semibold rounded-full border border-red-200">
+                                            <ShieldAlert size={11} /> Escalated
+                                        </span>
+                                    )}
+                                    {selected.status === 'human' && (
+                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-orange-100 text-orange-700 text-xs font-semibold rounded-full border border-orange-200">
+                                            <User size={11} /> Human
+                                        </span>
+                                    )}
+                                </div>
                                 <p className="text-xs text-gray-500 mt-0.5">
                                     Intent: <span className="font-medium">{selected.intent}</span>
                                     {selected.state?.booked && <span className="ml-2 text-green-600">✓ Booked</span>}
@@ -192,13 +206,13 @@ export default function ConversationsPage() {
                                 onClick={() => toggleTakeover(selected)}
                                 disabled={!!takingOver}
                                 className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 disabled:opacity-50 ${
-                                    selected.status === 'human'
+                                    selected.status === 'human' || selected.status === 'escalated'
                                         ? 'bg-green-100 text-green-700 hover:bg-green-200'
                                         : 'bg-orange-100 text-orange-700 hover:bg-orange-200'
                                 }`}
                             >
-                                {selected.status === 'human' ? <Bot size={14} /> : <User size={14} />}
-                                {selected.status === 'human' ? 'Return to AI' : 'Take Over'}
+                                {selected.status === 'human' || selected.status === 'escalated' ? <Bot size={14} /> : <User size={14} />}
+                                {selected.status === 'human' || selected.status === 'escalated' ? 'Return to AI' : 'Take Over'}
                             </button>
                         </div>
 
@@ -228,7 +242,13 @@ export default function ConversationsPage() {
                             )}
                         </div>
 
-                        {/* Takeover notice */}
+                        {/* Status banners */}
+                        {selected.status === 'escalated' && (
+                            <div className="p-3 bg-red-50 border-t border-red-200 text-xs text-red-700 flex items-center gap-2">
+                                <ShieldAlert size={12} />
+                                Escalated — customer flagged a complaint. AI is paused. Click &quot;Return to AI&quot; to resume automation.
+                            </div>
+                        )}
                         {selected.status === 'human' && (
                             <div className="p-3 bg-orange-50 border-t border-orange-100 text-xs text-orange-700 flex items-center gap-2">
                                 <User size={12} />
