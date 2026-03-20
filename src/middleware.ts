@@ -26,7 +26,8 @@ export async function middleware(request: NextRequest) {
         pathname.startsWith('/api/bookings') ||
         pathname.startsWith('/api/costs') ||
         pathname.startsWith('/api/dashboard') ||
-        pathname.startsWith('/api/analytics');
+        pathname.startsWith('/api/analytics') ||
+        pathname.startsWith('/api/settings');
 
     // Unauthenticated access to protected API routes → 401
     if (!session && (isAdminApiRoute || isBusinessApiRoute)) {
@@ -83,6 +84,7 @@ export const config = {
         '/api/dashboard/:path*',
         '/api/analytics',
         '/api/analytics/:path*',
+        '/api/settings/:path*',
         '/auth/login',
     ],
 };

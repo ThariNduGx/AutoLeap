@@ -23,30 +23,31 @@ export async function PATCH(
     }
 
     const body = await req.json();
-    const status = body.status === 'human' ? 'human' : 'ai';
+    const newStatus: string = body.status;
+
+    const ALLOWED_STATUSES = ['ai', 'human', 'escalated'];
+    if (!ALLOWED_STATUSES.includes(newStatus)) {
+        return NextResponse.json(
+            { error: `Invalid status. Allowed: ${ALLOWED_STATUSES.join(', ')}` },
+            { status: 400 }
+        );
+    }
 
     const supabase = getSupabaseClient();
 
-    // Verify conversation belongs to this business
-    const { data: conv } = await (supabase
+    // Update in one query, scoped to this business for security
+    const { data, error } = await (supabase
         .from('conversations') as any)
-        .select('id')
+        .update({ status: newStatus })
         .eq('id', params.id)
         .eq('business_id', businessId)
+        .select('id, status')
         .single();
 
-    if (!conv) {
+    if (error || !data) {
         return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
 
-    const { error } = await (supabase
-        .from('conversations') as any)
-        .update({ status })
-        .eq('id', params.id);
-
-    if (error) {
-        return NextResponse.json({ error: 'Database error' }, { status: 500 });
-    }
-
-    return NextResponse.json({ success: true, status });
+    console.log(`[CONVERSATIONS] Status → ${newStatus} for conv ${params.id}`);
+    return NextResponse.json({ success: true, status: data.status });
 }

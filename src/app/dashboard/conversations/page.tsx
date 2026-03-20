@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Search, MessageSquare, Bot, User, RefreshCw, AlertTriangle, CheckCircle, ShieldAlert, Send, Loader2 } from 'lucide-react';
+import { Search, MessageSquare, Bot, User, RefreshCw, AlertTriangle, CheckCircle, ShieldAlert, Send, Loader2, Download } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 
 interface Conversation {
@@ -131,9 +131,19 @@ export default function ConversationsPage() {
                 <div className="p-4 border-b border-gray-100">
                     <div className="flex items-center justify-between mb-3">
                         <h2 className="text-lg font-bold text-gray-900">Conversations</h2>
-                        <button onClick={fetchConversations} className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100">
-                            <RefreshCw size={15} />
-                        </button>
+                        <div className="flex items-center gap-1">
+                            <a
+                                href="/api/conversations/export?days=30"
+                                download
+                                title="Export last 30 days as CSV"
+                                className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100"
+                            >
+                                <Download size={15} />
+                            </a>
+                            <button onClick={fetchConversations} className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100">
+                                <RefreshCw size={15} />
+                            </button>
+                        </div>
                     </div>
                     <div className="relative mb-2">
                         <Search size={14} className="absolute left-3 top-2.5 text-gray-400" />

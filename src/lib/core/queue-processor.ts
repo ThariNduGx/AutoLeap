@@ -633,7 +633,7 @@ async function handleBooking(
     let totalTokensIn = 0;
     let totalTokensOut = 0;
     let iterations = 0;
-    const maxIterations = 5;
+    const maxIterations = 10;
 
     // Build context-aware prompt
     const isFirstMessage = conversation.history.length === 0;
@@ -837,7 +837,7 @@ Continue helping them complete the booking. State: ${JSON.stringify(conversation
     await commitCost(businessId, cost, 'gemini-flash-latest', totalTokensIn, totalTokensOut);
     return {
       success: true,
-      response: 'I\'m having trouble completing your booking. Our team has been notified and will reach out shortly. Sorry for the inconvenience!',
+      response: "I'm sorry, I wasn't able to complete your booking in this session. Our team has been notified and will get in touch with you shortly to help. You can also reply with your preferred date and we'll start fresh!",
       costIncurred: cost,
     };
 

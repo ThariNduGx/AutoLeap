@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import {
     Building2, MessageSquare, Facebook, User, Shield, Save, Loader2,
     CheckCircle2, XCircle, X, Eye, EyeOff, Calendar, Clock, Globe,
-    AlertTriangle,
+    AlertTriangle, DollarSign,
 } from 'lucide-react';
 
 // IANA timezone list (subset — most common zones)
@@ -137,6 +137,12 @@ export default function SettingsPage() {
     const [savingHours, setSavingHours] = useState(false);
     const [hoursSaved, setHoursSaved] = useState(false);
 
+    // Budget
+    const [monthlyBudget, setMonthlyBudget] = useState('10');
+    const [currentUsage, setCurrentUsage] = useState(0);
+    const [savingBudget, setSavingBudget] = useState(false);
+    const [budgetSaved, setBudgetSaved] = useState(false);
+
     // Change password modal
     const [showPasswordModal, setShowPasswordModal] = useState(false);
     const [passwordForm, setPasswordForm] = useState({ current: '', next: '', confirm: '' });
@@ -152,8 +158,11 @@ export default function SettingsPage() {
 
     async function fetchBusinessSettings() {
         try {
-            const res = await fetch('/api/business/settings');
-            const data = await res.json();
+            const [settingsRes, budgetRes] = await Promise.all([
+                fetch('/api/business/settings'),
+                fetch('/api/settings/budget'),
+            ]);
+            const data = await settingsRes.json();
             if (data.success) {
                 setBusiness(data.business);
                 setBusinessName(data.business.name || '');
@@ -161,10 +170,35 @@ export default function SettingsPage() {
                 setTimezone(data.business.timezone || 'Asia/Colombo');
                 setBusinessHours(data.business.business_hours || DEFAULT_HOURS);
             }
+            if (budgetRes.ok) {
+                const bud = await budgetRes.json();
+                setMonthlyBudget(String(bud.monthly_budget_usd ?? 10));
+                setCurrentUsage(bud.current_usage_usd ?? 0);
+            }
         } catch (error) {
             console.error('Failed to fetch settings:', error);
         } finally {
             setLoading(false);
+        }
+    }
+
+    async function handleSaveBudget() {
+        const val = parseFloat(monthlyBudget);
+        if (isNaN(val) || val < 0) return;
+        setSavingBudget(true);
+        setBudgetSaved(false);
+        try {
+            const res = await fetch('/api/settings/budget', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ monthly_budget_usd: val }),
+            });
+            if (res.ok) {
+                setBudgetSaved(true);
+                setTimeout(() => setBudgetSaved(false), 3000);
+            }
+        } finally {
+            setSavingBudget(false);
         }
     }
 
@@ -665,6 +699,79 @@ export default function SettingsPage() {
                                     <p className="text-xs text-gray-400 mt-2">Requires Google account with calendar access</p>
                                 </div>
                             )}
+                        </div>
+                    </div>
+                </div>
+
+                {/* ── AI Budget ── */}
+                <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+                    <div className="flex items-center gap-3 mb-6">
+                        <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center">
+                            <DollarSign size={20} className="text-green-600" />
+                        </div>
+                        <div>
+                            <h2 className="text-lg font-semibold text-gray-900">AI Budget</h2>
+                            <p className="text-sm text-gray-500">Monthly spending limit for AI responses</p>
+                        </div>
+                    </div>
+
+                    <div className="space-y-4">
+                        {/* Usage bar */}
+                        {(() => {
+                            const cap = parseFloat(monthlyBudget) || 0;
+                            const pct = cap > 0 ? Math.min(100, (currentUsage / cap) * 100) : 0;
+                            const barColor = pct >= 95 ? 'bg-red-500' : pct >= 80 ? 'bg-orange-400' : 'bg-green-500';
+                            return (
+                                <div>
+                                    <div className="flex justify-between text-sm mb-1">
+                                        <span className="text-gray-600">This month&apos;s usage</span>
+                                        <span className="font-medium text-gray-900">
+                                            ${currentUsage.toFixed(4)} / ${cap.toFixed(2)}
+                                        </span>
+                                    </div>
+                                    <div className="w-full bg-gray-100 rounded-full h-2">
+                                        <div className={`h-2 rounded-full transition-all ${barColor}`} style={{ width: `${pct}%` }} />
+                                    </div>
+                                    {pct >= 80 && (
+                                        <p className="text-xs text-orange-600 mt-1 flex items-center gap-1">
+                                            <AlertTriangle size={11} /> Usage above 80% — consider raising the limit.
+                                        </p>
+                                    )}
+                                </div>
+                            );
+                        })()}
+
+                        {/* Budget input */}
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                                Monthly limit (USD)
+                            </label>
+                            <div className="flex gap-3 items-center">
+                                <div className="relative flex-1 max-w-xs">
+                                    <span className="absolute left-3 top-2 text-gray-400 text-sm">$</span>
+                                    <input
+                                        type="number"
+                                        min="0"
+                                        max="10000"
+                                        step="1"
+                                        value={monthlyBudget}
+                                        onChange={e => setMonthlyBudget(e.target.value)}
+                                        className="w-full pl-7 pr-4 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-500"
+                                        placeholder="10"
+                                    />
+                                </div>
+                                <button
+                                    onClick={handleSaveBudget}
+                                    disabled={savingBudget}
+                                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg flex items-center gap-2 disabled:opacity-50 transition-colors"
+                                >
+                                    {savingBudget ? <Loader2 size={14} className="animate-spin" /> : budgetSaved ? <CheckCircle2 size={14} /> : <Save size={14} />}
+                                    {budgetSaved ? 'Saved!' : 'Save'}
+                                </button>
+                            </div>
+                            <p className="text-xs text-gray-400 mt-1">
+                                Set to 0 to disable the limit. AI calls that would exceed the limit are blocked.
+                            </p>
                         </div>
                     </div>
                 </div>

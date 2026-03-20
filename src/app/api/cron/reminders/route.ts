@@ -169,7 +169,15 @@ async function sendReminderToCustomer(
     `📅 ${appt.appointment_date}\n` +
     `🕐 ${appt.appointment_time}\n\n` +
     `📍 *${businessName}*\n\n` +
-    `To cancel, reply with "cancel my appointment".`;
+    `Please confirm or cancel below.`;
+
+  // Inline keyboard: Confirm ✅ / Cancel ❌
+  const replyMarkup = {
+    inline_keyboard: [[
+      { text: '✅ Confirm', callback_data: `confirm_appt:${appt.id}` },
+      { text: '❌ Cancel', callback_data: `cancel_appt:${appt.id}` },
+    ]],
+  };
 
   try {
     const res = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
@@ -179,6 +187,7 @@ async function sendReminderToCustomer(
         chat_id: appt.customer_chat_id,
         text: message,
         parse_mode: 'Markdown',
+        reply_markup: replyMarkup,
       }),
     });
 
