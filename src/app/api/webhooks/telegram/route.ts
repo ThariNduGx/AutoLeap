@@ -98,14 +98,42 @@ export async function POST(req: Request) {
 
         if (apptId && rating >= 1 && rating <= 5) {
           const chatId = cq.message?.chat?.id || cq.from?.id;
-          // Save the review
-          await (supabase.from('reviews') as any).insert({
+
+          // Save the review — check for duplicate first (customer tapping twice)
+          const { error: reviewErr } = await (supabase.from('reviews') as any).insert({
             business_id:      businessId,
             appointment_id:   apptId,
             customer_chat_id: String(chatId),
             platform:         'telegram',
             rating,
-          }).catch(() => {});
+          });
+
+          // If review saved and rating is ≤ 2 stars, alert the owner immediately
+          if (!reviewErr && rating <= 2) {
+            try {
+              const { data: biz } = await (supabase.from('businesses') as any)
+                .select('telegram_bot_token, owner_telegram_chat_id, name')
+                .eq('id', businessId)
+                .single();
+              const { data: apptInfo } = await (supabase.from('appointments') as any)
+                .select('customer_name, service_type, appointment_date')
+                .eq('id', apptId)
+                .single();
+              if (biz?.owner_telegram_chat_id && apptInfo) {
+                const stars = '⭐'.repeat(rating);
+                const alertMsg = `⚠️ *Low Rating Alert*\n\n${stars} (${rating}/5) received from *${apptInfo.customer_name || 'a customer'}*\nService: ${apptInfo.service_type || 'Unknown'}\nDate: ${apptInfo.appointment_date || 'Unknown'}\n\nConsider following up with this customer directly.`;
+                fetch(`https://api.telegram.org/bot${biz.telegram_bot_token}/sendMessage`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    chat_id: biz.owner_telegram_chat_id,
+                    text: alertMsg,
+                    parse_mode: 'Markdown',
+                  }),
+                }).catch(() => {});
+              }
+            } catch { /* non-fatal */ }
+          }
 
           // Ack + remove buttons
           fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {

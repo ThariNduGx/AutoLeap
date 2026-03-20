@@ -2,10 +2,10 @@
 
 import { useEffect, useState } from 'react';
 import {
-    BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-    PieChart, Pie, Cell, Legend,
+    ComposedChart, BarChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip,
+    ResponsiveContainer, PieChart, Pie, Cell, Legend,
 } from 'recharts';
-import { TrendingUp, Users, Calendar, MessageSquare, Loader2, AlertCircle, Target, Clock } from 'lucide-react';
+import { TrendingUp, Users, Calendar, MessageSquare, Loader2, AlertCircle, Target, Clock, DollarSign, Star } from 'lucide-react';
 
 const INTENT_COLORS: Record<string, string> = {
     booking: '#6366f1',
@@ -76,11 +76,11 @@ export default function AnalyticsPage() {
             ) : data && (
                 <div className="space-y-8">
                     {/* ── KPI Row ── */}
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
                         <KPICard
                             icon={<Target size={20} />}
                             color="indigo"
-                            label="Booking Success Rate"
+                            label="Booking Success"
                             value={data.bookingFunnel.successRate != null ? `${data.bookingFunnel.successRate}%` : '—'}
                             sub={`${data.bookingFunnel.successful} of ${data.bookingFunnel.totalAttempts} attempts`}
                         />
@@ -104,6 +104,24 @@ export default function AnalyticsPage() {
                             label="Avg Turns to Book"
                             value={data.bookingFunnel.avgTurnsToBook || '—'}
                             sub="AI conversation turns"
+                        />
+                        <KPICard
+                            icon={<DollarSign size={20} />}
+                            color="teal"
+                            label="Revenue"
+                            value={data.revenue.total > 0
+                                ? `${data.revenue.currency} ${data.revenue.total.toLocaleString()}`
+                                : '—'}
+                            sub={`${data.revenue.tracked} bookings with price`}
+                        />
+                        <KPICard
+                            icon={<Star size={20} />}
+                            color="yellow"
+                            label="Avg Rating"
+                            value={data.satisfaction.avgRating != null
+                                ? `${data.satisfaction.avgRating} ★`
+                                : '—'}
+                            sub={`${data.satisfaction.totalReviews} reviews`}
                         />
                     </div>
 
@@ -217,7 +235,7 @@ export default function AnalyticsPage() {
                             ) : (
                                 <div className="h-56">
                                     <ResponsiveContainer width="100%" height="100%">
-                                        <BarChart data={data.appointments.dailyBookings} barSize={8}>
+                                        <ComposedChart data={data.appointments.dailyBookings} barSize={8}>
                                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                                             <XAxis
                                                 dataKey="date"
@@ -226,14 +244,25 @@ export default function AnalyticsPage() {
                                                 tickLine={false}
                                                 tickFormatter={v => v.slice(5)}
                                             />
-                                            <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} allowDecimals={false} />
+                                            <YAxis yAxisId="left" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} allowDecimals={false} />
+                                            <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10, fill: '#14b8a6' }} axisLine={false} tickLine={false}
+                                                tickFormatter={v => v > 0 ? v.toLocaleString() : ''} />
                                             <Tooltip
                                                 contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                                                formatter={(v: any, name: any) =>
+                                                    name === 'Revenue'
+                                                        ? [`${data.revenue.currency} ${Number(v).toLocaleString()}`, name]
+                                                        : [v, name]
+                                                }
                                             />
-                                            <Bar dataKey="scheduled" name="Scheduled" fill="#6366f1" radius={[3, 3, 0, 0]} />
-                                            <Bar dataKey="cancelled" name="Cancelled" fill="#f87171" radius={[3, 3, 0, 0]} />
-                                            <Bar dataKey="completed" name="Completed" fill="#34d399" radius={[3, 3, 0, 0]} />
-                                        </BarChart>
+                                            <Bar yAxisId="left" dataKey="scheduled" name="Scheduled" fill="#6366f1" radius={[3, 3, 0, 0]} />
+                                            <Bar yAxisId="left" dataKey="cancelled" name="Cancelled" fill="#f87171" radius={[3, 3, 0, 0]} />
+                                            <Bar yAxisId="left" dataKey="completed" name="Completed" fill="#34d399" radius={[3, 3, 0, 0]} />
+                                            {data.revenue.tracked > 0 && (
+                                                <Line yAxisId="right" type="monotone" dataKey="revenue" name="Revenue"
+                                                    stroke="#14b8a6" strokeWidth={2} dot={false} />
+                                            )}
+                                        </ComposedChart>
                                     </ResponsiveContainer>
                                 </div>
                             )}
@@ -266,28 +295,106 @@ export default function AnalyticsPage() {
                         </div>
                     </div>
 
-                    {/* ── Top FAQs ── */}
-                    {data.topFAQs.length > 0 && (
+                    {/* ── Row 3: Revenue by Service + Top FAQs ── */}
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        {/* Revenue by Service */}
+                        <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
+                            <h2 className="text-base font-semibold text-gray-900 mb-5 flex items-center gap-2">
+                                <DollarSign size={18} className="text-teal-500" />
+                                Revenue by Service
+                            </h2>
+                            {data.revenue.byService.length === 0 ? (
+                                <EmptyState message="No price data yet — add prices to your services" />
+                            ) : (
+                                <div className="h-56">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <BarChart data={data.revenue.byService} layout="vertical" barSize={14}>
+                                            <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
+                                            <XAxis
+                                                type="number"
+                                                tick={{ fontSize: 10, fill: '#94a3b8' }}
+                                                axisLine={false}
+                                                tickLine={false}
+                                                tickFormatter={v => v.toLocaleString()}
+                                            />
+                                            <YAxis
+                                                type="category"
+                                                dataKey="service"
+                                                width={110}
+                                                tick={{ fontSize: 10, fill: '#64748b' }}
+                                                axisLine={false}
+                                                tickLine={false}
+                                            />
+                                            <Tooltip
+                                                contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                                                formatter={(v: any) => [`${data.revenue.currency} ${Number(v).toLocaleString()}`, 'Revenue']}
+                                            />
+                                            <Bar dataKey="revenue" fill="#14b8a6" radius={[0, 3, 3, 0]} />
+                                        </BarChart>
+                                    </ResponsiveContainer>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Top FAQs */}
                         <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
                             <h2 className="text-base font-semibold text-gray-900 mb-5 flex items-center gap-2">
                                 <TrendingUp size={18} className="text-indigo-500" />
                                 Most-Used FAQs
                             </h2>
-                            <div className="space-y-3">
-                                {data.topFAQs.map((faq: any, i: number) => (
-                                    <div key={i} className="flex items-center gap-4">
-                                        <span className="text-xs font-bold text-gray-400 w-5 text-right shrink-0">{i + 1}</span>
-                                        <div className="flex-1 min-w-0">
-                                            <p className="text-sm text-gray-900 truncate">{faq.question}</p>
-                                            <p className="text-xs text-gray-400 capitalize">{faq.category || 'general'}</p>
+                            {data.topFAQs.length === 0 ? (
+                                <EmptyState message="No FAQ hits recorded yet" />
+                            ) : (
+                                <div className="space-y-3">
+                                    {data.topFAQs.map((faq: any, i: number) => (
+                                        <div key={i} className="flex items-center gap-4">
+                                            <span className="text-xs font-bold text-gray-400 w-5 text-right shrink-0">{i + 1}</span>
+                                            <div className="flex-1 min-w-0">
+                                                <p className="text-sm text-gray-900 truncate">{faq.question}</p>
+                                                <p className="text-xs text-gray-400 capitalize">{faq.category || 'general'}</p>
+                                            </div>
+                                            <div className="shrink-0 text-right">
+                                                <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-green-50 text-green-700 text-xs font-semibold rounded-full">
+                                                    <Users size={10} /> {faq.hit_count}
+                                                </span>
+                                            </div>
                                         </div>
-                                        <div className="shrink-0 text-right">
-                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-green-50 text-green-700 text-xs font-semibold rounded-full">
-                                                <Users size={10} /> {faq.hit_count}
-                                            </span>
-                                        </div>
-                                    </div>
-                                ))}
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* ── Rating Distribution ── */}
+                    {data.satisfaction.totalReviews > 0 && (
+                        <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
+                            <h2 className="text-base font-semibold text-gray-900 mb-5 flex items-center gap-2">
+                                <Star size={18} className="text-yellow-500" />
+                                Customer Satisfaction
+                            </h2>
+                            <div className="flex items-center gap-8">
+                                <div className="text-center">
+                                    <p className="text-5xl font-bold text-gray-900">{data.satisfaction.avgRating}</p>
+                                    <p className="text-yellow-400 text-xl mt-1">{'★'.repeat(Math.round(data.satisfaction.avgRating || 0))}</p>
+                                    <p className="text-xs text-gray-400 mt-1">{data.satisfaction.totalReviews} review{data.satisfaction.totalReviews !== 1 ? 's' : ''}</p>
+                                </div>
+                                <div className="flex-1 space-y-1.5">
+                                    {data.satisfaction.ratingDistribution.map((r: any) => {
+                                        const pct = data.satisfaction.totalReviews > 0
+                                            ? Math.round((r.count / data.satisfaction.totalReviews) * 100)
+                                            : 0;
+                                        return (
+                                            <div key={r.stars} className="flex items-center gap-2 text-sm">
+                                                <span className="text-xs text-gray-500 w-4 text-right">{r.stars}</span>
+                                                <span className="text-yellow-400 text-xs">★</span>
+                                                <div className="flex-1 bg-gray-100 rounded-full h-2">
+                                                    <div className="h-2 rounded-full bg-yellow-400" style={{ width: `${pct}%` }} />
+                                                </div>
+                                                <span className="text-xs text-gray-500 w-6 text-right">{r.count}</span>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
                             </div>
                         </div>
                     )}
@@ -299,7 +406,7 @@ export default function AnalyticsPage() {
 
 function KPICard({ icon, color, label, value, sub }: {
     icon: React.ReactNode;
-    color: 'indigo' | 'purple' | 'green' | 'orange';
+    color: 'indigo' | 'purple' | 'green' | 'orange' | 'teal' | 'yellow';
     label: string;
     value: string | number;
     sub: string;
@@ -309,6 +416,8 @@ function KPICard({ icon, color, label, value, sub }: {
         purple: 'bg-purple-100 text-purple-600',
         green: 'bg-green-100 text-green-600',
         orange: 'bg-orange-100 text-orange-600',
+        teal: 'bg-teal-100 text-teal-600',
+        yellow: 'bg-yellow-100 text-yellow-600',
     };
     return (
         <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
