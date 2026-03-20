@@ -49,7 +49,7 @@ export async function POST(req: Request) {
         const time = parts[2];
 
         // Enqueue as synthetic booking continuation
-        await (supabase.from('request_queue') as any).insert({
+        const { error: cbError } = await (supabase.from('request_queue') as any).insert({
           business_id: businessId,
           raw_payload: {
             message: {
@@ -61,6 +61,11 @@ export async function POST(req: Request) {
           },
           status: 'pending',
         });
+
+        if (cbError) {
+          console.error('[TELEGRAM WEBHOOK] Callback queue error:', cbError);
+          return new NextResponse('Internal Server Error', { status: 500 });
+        }
 
         // Answer callback to remove spinner (use the business's own bot token)
         fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
@@ -90,8 +95,8 @@ export async function POST(req: Request) {
 
     if (error) {
       console.error('[TELEGRAM WEBHOOK] Queue error:', error);
-      // Still return 200 so Telegram doesn't retry
-      return new NextResponse('OK', { status: 200 });
+      // Return 500 so Telegram retries delivery (message won't be silently dropped)
+      return new NextResponse('Internal Server Error', { status: 500 });
     }
 
     triggerQueue();

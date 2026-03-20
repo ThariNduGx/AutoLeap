@@ -149,7 +149,7 @@ export async function executeCalendarTool(
           appointment_time: time,
           duration_minutes: duration,
           google_event_id: result.eventId,
-          status: 'confirmed',
+          status: 'scheduled',
           customer_chat_id: customer_chat_id || null,
         });
 

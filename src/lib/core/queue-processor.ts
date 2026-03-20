@@ -591,7 +591,8 @@ async function handleBooking(
       history: conversation.history,
     });
 
-    let totalTokens = 0;
+    let totalTokensIn = 0;
+    let totalTokensOut = 0;
     let iterations = 0;
     const maxIterations = 5;
 
@@ -638,7 +639,8 @@ Continue helping them complete the booking. State: ${JSON.stringify(conversation
       const result = await chat.sendMessage(currentMessage);
       const response = result.response;
 
-      totalTokens += response.usageMetadata?.totalTokenCount || 0;
+      totalTokensIn += response.usageMetadata?.promptTokenCount || 0;
+      totalTokensOut += response.usageMetadata?.candidatesTokenCount || 0;
 
       // Save to history
       conversation.history.push(
@@ -729,7 +731,8 @@ Continue helping them complete the booking. State: ${JSON.stringify(conversation
 
         currentMessage = '';
         const nextResult = await chat.sendMessage(functionResponses as any);
-        totalTokens += nextResult.response.usageMetadata?.totalTokenCount || 0;
+        totalTokensIn += nextResult.response.usageMetadata?.promptTokenCount || 0;
+        totalTokensOut += nextResult.response.usageMetadata?.candidatesTokenCount || 0;
 
         // Save tool results to history
         conversation.history.push(
@@ -746,8 +749,8 @@ Continue helping them complete the booking. State: ${JSON.stringify(conversation
 
         await updateConversation(conversation.id, conversation.state, conversation.history);
 
-        const cost = calculateActualCost('gemini-flash-latest', totalTokens, 0);
-        await commitCost(businessId, cost, 'gemini-flash-latest', totalTokens, 0);
+        const cost = calculateActualCost('gemini-flash-latest', totalTokensIn, totalTokensOut);
+        await commitCost(businessId, cost, 'gemini-flash-latest', totalTokensIn, totalTokensOut);
 
         return {
           success: true,
@@ -763,8 +766,8 @@ Continue helping them complete the booking. State: ${JSON.stringify(conversation
 
       await updateConversation(conversation.id, conversation.state, conversation.history);
 
-      const cost = calculateActualCost('gemini-flash-latest', totalTokens, 0);
-      await commitCost(businessId, cost, 'gemini-flash-latest', totalTokens, 0);
+      const cost = calculateActualCost('gemini-flash-latest', totalTokensIn, totalTokensOut);
+      await commitCost(businessId, cost, 'gemini-flash-latest', totalTokensIn, totalTokensOut);
 
       return {
         success: true,
@@ -791,8 +794,8 @@ Continue helping them complete the booking. State: ${JSON.stringify(conversation
       );
     }
 
-    const cost = calculateActualCost('gemini-flash-latest', totalTokens, 0);
-    await commitCost(businessId, cost, 'gemini-flash-latest', totalTokens, 0);
+    const cost = calculateActualCost('gemini-flash-latest', totalTokensIn, totalTokensOut);
+    await commitCost(businessId, cost, 'gemini-flash-latest', totalTokensIn, totalTokensOut);
     return {
       success: true,
       response: 'I\'m having trouble completing your booking. Our team has been notified and will reach out shortly. Sorry for the inconvenience!',
@@ -825,9 +828,9 @@ async function handleStatus(
     .eq('business_id', businessId)
     .eq('customer_chat_id', message.chatId)
     .gte('appointment_date', today)
-    .eq('status', 'confirmed')
+    .eq('status', 'scheduled')
     .order('appointment_date', { ascending: true })
-    .order('appointment_time', { ascending: true })  // Fix: explicit asc on time
+    .order('appointment_time', { ascending: true })
     .limit(1);
 
   if (!appointments || appointments.length === 0) {
@@ -848,7 +851,7 @@ async function handleStatus(
 
   return {
     success: true,
-    response: `Your next appointment:\n\n*${appt.service_type}*\n📅 ${dateStr}\n🕐 ${appt.appointment_time}\n\nStatus: ${appt.status === 'confirmed' ? '✅ Confirmed' : appt.status}`,
+    response: `Your next appointment:\n\n*${appt.service_type}*\n📅 ${dateStr}\n🕐 ${appt.appointment_time}\n\nStatus: ${appt.status === 'scheduled' ? '✅ Confirmed' : appt.status}`,
     costIncurred: 0,
   };
 }
