@@ -1,4 +1,4 @@
-export type IntentType = 'booking' | 'cancellation' | 'faq' | 'greeting' | 'status' | 'complaint' | 'unknown';
+export type IntentType = 'booking' | 'cancellation' | 'reschedule' | 'faq' | 'greeting' | 'status' | 'complaint' | 'unknown';
 
 interface IntentPattern {
   intent: IntentType;
@@ -13,6 +13,14 @@ const INTENT_RULES: IntentPattern[] = [
       /^(hi|hello|hey|good morning|good afternoon|good evening)/i,
     ],
     priority: 10,
+  },
+  {
+    intent: 'reschedule',
+    patterns: [
+      /\b(reschedule|rebook|change.*appointment|move.*appointment|different.*time|another.*time|new.*time)\b/i,
+      /\b(change|move|shift)\b.*\b(booking|slot|appointment)\b/i,
+    ],
+    priority: 10, // Same priority as cancellation — check before booking
   },
   {
     intent: 'cancellation',
@@ -110,6 +118,7 @@ export function selectModel(intent: IntentType): string {
 
     case 'booking':
     case 'cancellation':
+    case 'reschedule':
     case 'complaint':
       return 'gpt-4o'; // Complex tool-calling, needs powerful model
 

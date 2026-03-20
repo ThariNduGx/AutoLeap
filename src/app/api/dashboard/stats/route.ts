@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession, hasRole } from '@/lib/auth/session';
 import { getSupabaseClient } from '@/lib/infrastructure/supabase';
+import { rateLimit } from '@/lib/infrastructure/rate-limit';
 
 /**
  * GET /api/dashboard/stats
@@ -10,6 +11,11 @@ import { getSupabaseClient } from '@/lib/infrastructure/supabase';
  */
 export async function GET(request: NextRequest) {
     try {
+        const rl = await rateLimit(request, 'dashboard/stats', { limit: 30, windowSeconds: 60 });
+        if (!rl.allowed) {
+            return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
+        }
+
         const session = await getSession(request);
 
         if (!session || !hasRole(session, 'business')) {

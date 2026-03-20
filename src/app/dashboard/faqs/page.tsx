@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { Plus, Trash2, Tag, Loader2, Upload, FileText, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Plus, Trash2, Tag, Loader2, Upload, FileText, CheckCircle2, AlertCircle, TrendingUp } from 'lucide-react';
 
 export default function FAQsPage() {
     const [faqs, setFaqs] = useState<any[]>([]);
@@ -95,7 +95,9 @@ export default function FAQsPage() {
             <div className="flex items-center justify-between mb-8">
                 <div>
                     <h1 className="text-2xl font-bold text-gray-900">FAQ Management</h1>
-                    <p className="text-gray-500 mt-1">Train your AI agent to answer customer questions.</p>
+                    <p className="text-gray-500 mt-1">
+                        {faqs.length} FAQs &mdash; {faqs.reduce((s, f) => s + (f.hit_count ?? 0), 0)} total hits
+                    </p>
                 </div>
                 <div className="flex items-center gap-3">
                     {/* CSV upload status */}
@@ -174,6 +176,12 @@ export default function FAQsPage() {
                                     <Tag size={12} />
                                     {faq.category || 'general'}
                                 </span>
+                                {(faq.hit_count ?? 0) > 0 && (
+                                    <span className="flex items-center gap-1 px-3 py-1 bg-green-50 text-green-700 text-sm rounded-full font-medium">
+                                        <TrendingUp size={12} />
+                                        {faq.hit_count} hit{faq.hit_count !== 1 ? 's' : ''}
+                                    </span>
+                                )}
                             </div>
                         </div>
                     ))}

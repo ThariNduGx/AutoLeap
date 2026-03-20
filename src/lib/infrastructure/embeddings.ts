@@ -145,6 +145,8 @@ export async function searchFAQs(
     console.log('[FAQ] ✅ Found', data?.length || 0, 'matches');
 
     if (data && data.length > 0) {
+      // Increment hit_count for each matched FAQ (fire-and-forget)
+      incrementFAQHits(supabase, data.map((r: any) => r.id).filter(Boolean));
       return data;
     }
 
@@ -162,9 +164,24 @@ export async function searchFAQs(
     }
 
     console.log('[FAQ] Keyword results:', kwData?.length || 0);
+    if (kwData && kwData.length > 0) {
+      incrementFAQHits(supabase, kwData.map((r: any) => r.id).filter(Boolean));
+    }
     return kwData || [];
   } catch (error) {
     console.error('[FAQ] Search exception:', error);
     return [];
   }
+}
+
+/**
+ * Increment hit_count for matched FAQs.
+ * Fire-and-forget — never throws.
+ */
+function incrementFAQHits(supabase: ReturnType<typeof getSupabaseClient>, ids: string[]): void {
+  if (ids.length === 0) return;
+  (supabase.rpc as any)('increment_faq_hits', { p_ids: ids }).then(
+    () => { /* no-op */ },
+    (err: any) => console.warn('[FAQ] hit_count increment failed (non-fatal):', err)
+  );
 }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseClient } from '@/lib/infrastructure/supabase';
 import { getSession, hasRole } from '@/lib/auth/session';
+import { rateLimit } from '@/lib/infrastructure/rate-limit';
 
 export const dynamic = 'force-dynamic';
 
@@ -10,6 +11,11 @@ export const dynamic = 'force-dynamic';
  * Supports searching by customer_chat_id, intent, or message content.
  */
 export async function GET(req: NextRequest) {
+    const rl = await rateLimit(req, 'conversations', { limit: 60, windowSeconds: 60 });
+    if (!rl.allowed) {
+        return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
+    }
+
     const session = await getSession(req);
     if (!session || !hasRole(session, 'business')) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });

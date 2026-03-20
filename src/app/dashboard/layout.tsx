@@ -12,7 +12,8 @@ import {
     Menu,
     X,
     CreditCard,
-    LogOut
+    LogOut,
+    TrendingUp,
 } from 'lucide-react';
 
 export default function DashboardLayout({
@@ -46,8 +47,10 @@ export default function DashboardLayout({
 
     const navigation = [
         { name: 'Overview', href: '/dashboard', icon: LayoutDashboard },
+        { name: 'Conversations', href: '/dashboard/conversations', icon: MessageSquare },
         { name: 'Bookings', href: '/dashboard/bookings', icon: Calendar },
-        { name: 'FAQs', href: '/dashboard/faqs', icon: MessageSquare },
+        { name: 'Analytics', href: '/dashboard/analytics', icon: TrendingUp },
+        { name: 'FAQs', href: '/dashboard/faqs', icon: BarChart2 },
         { name: 'Cost Center', href: '/dashboard/costs', icon: CreditCard },
         { name: 'Settings', href: '/dashboard/settings', icon: Settings },
     ];

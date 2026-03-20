@@ -1,10 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseClient } from '@/lib/infrastructure/supabase';
 import { getSession, hasRole } from '@/lib/auth/session';
+import { rateLimit } from '@/lib/infrastructure/rate-limit';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
+    const rl = await rateLimit(req, 'bookings', { limit: 60, windowSeconds: 60 });
+    if (!rl.allowed) {
+        return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
+    }
+
     const session = await getSession(req);
 
     if (!session || !hasRole(session, 'business')) {

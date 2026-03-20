@@ -183,6 +183,10 @@ async function processItem(item: QueueItem): Promise<void> {
       result = await handleCancellation(message, item.business_id);
       break;
 
+    case 'reschedule':
+      result = await handleReschedule(message, item.business_id, model, platform);
+      break;
+
     case 'complaint':
       result = await handleComplaint(message, item.business_id, model);
       break;
@@ -640,7 +644,7 @@ async function handleBooking(
     if (message.text.startsWith('slot:')) {
       const [, date, time] = message.text.split(':');
       currentMessage = `Customer selected the time slot: ${date} at ${time}. ` +
-        `Now ask for their full name and phone number (10-digit Sri Lankan format like 0771234567) to confirm the booking. ` +
+        `Now ask for their full name and phone number to confirm the booking. ` +
         `State so far: ${JSON.stringify(conversation.state)}`;
       // Pre-fill state with selected slot
       conversation.state.selected_date = date;
@@ -660,7 +664,7 @@ WORKFLOW:
 Current date: ${new Date().toLocaleDateString('en-CA', { timeZone: tz })}
 Tomorrow: ${new Date(Date.now() + 86400000).toLocaleDateString('en-CA', { timeZone: tz })}
 
-Start by checking availability if you can determine the date.`;
+Start by checking availability if you can determine the date. Accept any valid phone number format.`;
     } else {
       currentMessage = `Customer's new message: "${message.text}"
 
@@ -1045,6 +1049,67 @@ async function handleCancellation(
     response: `Your appointment for **${appointment.service_type}** on ${appointment.appointment_date} at ${appointment.appointment_time} has been successfully cancelled. If you'd like to rebook, just let me know!`,
     costIncurred: 0,
   };
+}
+
+/**
+ * Handle appointment rescheduling:
+ * 1. Find and cancel the customer's current appointment
+ * 2. Transition into the booking flow so they can pick a new slot
+ */
+async function handleReschedule(
+  message: { text: string; userId: string; chatId: string },
+  businessId: string,
+  model: string,
+  platform: string
+): Promise<ProcessingResult> {
+  const supabase = getSupabaseClient();
+  const { data: bizTzR } = await (supabase.from('businesses') as any).select('timezone').eq('id', businessId).single();
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: bizTzR?.timezone ?? 'Asia/Colombo' });
+
+  // Find the customer's current upcoming appointment
+  const { data: appointment } = await (supabase
+    .from('appointments') as any)
+    .select('id, customer_name, service_type, appointment_date, appointment_time, google_event_id, status')
+    .eq('business_id', businessId)
+    .eq('customer_chat_id', message.chatId)
+    .eq('status', 'scheduled')
+    .gte('appointment_date', today)
+    .order('appointment_date', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (!appointment) {
+    return {
+      success: true,
+      response: "I couldn't find any upcoming appointments linked to this chat to reschedule. Would you like to book a new appointment instead?",
+      costIncurred: 0,
+    };
+  }
+
+  // Cancel the existing appointment
+  if (appointment.google_event_id) {
+    const { cancelAppointment } = await import('../infrastructure/calendar');
+    await cancelAppointment(businessId, appointment.google_event_id);
+  }
+  await (supabase.from('appointments') as any)
+    .update({ status: 'cancelled' })
+    .eq('id', appointment.id);
+
+  // Reset conversation state so the booking flow starts fresh
+  await (supabase.from('conversations') as any)
+    .update({ state: { rescheduling: true, original_service: appointment.service_type }, intent: 'booking' })
+    .eq('business_id', businessId)
+    .eq('customer_chat_id', message.chatId);
+
+  console.log('[RESCHEDULE] ✅ Old appointment cancelled, routing to booking flow');
+
+  // Synthesise a new message to feed into the booking handler
+  const rebookMessage = {
+    ...message,
+    text: `I want to reschedule my ${appointment.service_type} appointment`,
+  };
+
+  return handleBooking(rebookMessage, businessId, model, platform);
 }
 
 async function handleUnknown(
