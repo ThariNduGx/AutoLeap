@@ -17,24 +17,23 @@ export async function GET(req: NextRequest) {
 
   // Single customer with full appointment history
   if (customerId) {
-    const [{ data: customer }, { data: appointments }] = await Promise.all([
-      (supabase.from('customers') as any)
-        .select('*')
-        .eq('id', customerId)
-        .eq('business_id', session.businessId)
-        .single(),
-      (supabase.from('appointments') as any)
-        .select('id, service_type, appointment_date, appointment_time, status, price, currency, notes')
-        .eq('business_id', session.businessId)
-        .order('appointment_date', { ascending: false })
-        .limit(50),
-    ]);
+    const { data: customer } = await (supabase.from('customers') as any)
+      .select('*')
+      .eq('id', customerId)
+      .eq('business_id', session.businessId)
+      .single();
     if (!customer) return NextResponse.json({ error: 'Not found' }, { status: 404 });
-    // filter appointments to this customer's phone
-    const customerAppointments = (appointments || []).filter(
-      (a: any) => a.customer_phone === customer.phone
-    );
-    return NextResponse.json({ ...customer, appointments: customerAppointments });
+
+    // Filter appointments by phone in the DB query (not in-memory) so we don't
+    // miss records when the total appointment count exceeds the page limit.
+    const { data: appointments } = await (supabase.from('appointments') as any)
+      .select('id, service_type, appointment_date, appointment_time, status, price, currency, notes, customer_phone')
+      .eq('business_id', session.businessId)
+      .eq('customer_phone', customer.phone)
+      .order('appointment_date', { ascending: false })
+      .limit(100);
+
+    return NextResponse.json({ ...customer, appointments: appointments || [] });
   }
 
   // List all customers

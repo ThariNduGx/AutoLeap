@@ -131,8 +131,8 @@ export async function executeCalendarTool(
     case 'get_available_slots': {
       const { date, service_name } = args;
 
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-        return { error: 'Invalid date format. Use YYYY-MM-DD' };
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || isNaN(new Date(date + 'T00:00:00Z').getTime())) {
+        return { error: 'Invalid date. Use YYYY-MM-DD format with a real calendar date.' };
       }
 
       // Look up service config for duration, buffer, and min_advance_hours

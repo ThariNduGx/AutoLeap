@@ -298,6 +298,23 @@ async function getOrCreateConversation(
     .single();
 
   if (error || !created) {
+    // Handle potential race condition — another concurrent request may have created
+    // the conversation between our SELECT check and this INSERT. Try fetching again.
+    if (error) {
+      const { data: raceWinner } = await (supabase
+        .from('conversations') as any)
+        .select('*')
+        .eq('business_id', businessId)
+        .eq('customer_chat_id', customerId)
+        .gt('expires_at', new Date().toISOString())
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (raceWinner) {
+        console.log('[CONVERSATION] Race resolved — using existing:', (raceWinner as any).id);
+        return raceWinner as any as Conversation;
+      }
+    }
     console.error('[CONVERSATION] Failed to create:', error);
     throw new Error('Failed to create conversation');
   }
@@ -872,23 +889,60 @@ Continue helping them complete the booking. State: ${JSON.stringify(conversation
           });
         }
 
-        currentMessage = '';
-        const nextResult = await chat.sendMessage(functionResponses as any);
-        totalTokensIn += nextResult.response.usageMetadata?.promptTokenCount || 0;
-        totalTokensOut += nextResult.response.usageMetadata?.candidatesTokenCount || 0;
+        // Send tool results back to the model and handle chained tool calls in an
+        // inner loop (max 4 additional rounds) — avoids the broken outer-loop
+        // `continue` pattern that was sending an empty string as the next message.
+        let chainResult = await chat.sendMessage(functionResponses as any);
+        totalTokensIn += chainResult.response.usageMetadata?.promptTokenCount || 0;
+        totalTokensOut += chainResult.response.usageMetadata?.candidatesTokenCount || 0;
 
-        // Save tool results to history
         conversation.history.push(
           { role: 'function', parts: functionResponses },
-          { role: 'model', parts: nextResult.response.candidates?.[0]?.content?.parts || [] }
+          { role: 'model', parts: chainResult.response.candidates?.[0]?.content?.parts || [] }
         );
 
-        const nextFunctionCalls = nextResult.response.functionCalls();
-        if (nextFunctionCalls && nextFunctionCalls.length > 0) {
-          continue;
+        // Inner loop: process chained function calls without restarting the outer loop
+        for (let toolRound = 0; toolRound < 4; toolRound++) {
+          const chainCalls = chainResult.response.functionCalls();
+          if (!chainCalls || chainCalls.length === 0) break;
+
+          const chainResponses = [];
+          for (const cc of chainCalls) {
+            const ccArgs = { ...cc.args } as any;
+            if (cc.name === 'book_appointment') ccArgs.customer_chat_id = message.chatId;
+            const ccResult = await executeCalendarTool(cc.name, ccArgs, businessId);
+
+            if (cc.name === 'get_available_slots' && ccResult.available_slots?.length > 0) {
+              conversation.state.pending_slots = ccResult.available_slots;
+              conversation.state.pending_date = ccArgs.date;
+              if (platform === 'messenger') {
+                pendingMessengerSlots = { date: ccArgs.date, slots: ccResult.available_slots };
+              } else {
+                const { buildSlotKeyboard } = await import('../infrastructure/telegram');
+                pendingSlotKeyboard = buildSlotKeyboard(ccResult.available_slots, ccArgs.date);
+              }
+            }
+            if (cc.name === 'book_appointment' && ccResult.success) {
+              conversation.state.booked = true;
+              conversation.state.appointment = ccResult;
+              conversation.state.pending_slots = undefined;
+            }
+
+            chainResponses.push({ functionResponse: { name: cc.name, response: ccResult } });
+          }
+
+          chainResult = await chat.sendMessage(chainResponses as any);
+          totalTokensIn += chainResult.response.usageMetadata?.promptTokenCount || 0;
+          totalTokensOut += chainResult.response.usageMetadata?.candidatesTokenCount || 0;
+          conversation.history.push(
+            { role: 'function', parts: chainResponses },
+            { role: 'model', parts: chainResult.response.candidates?.[0]?.content?.parts || [] }
+          );
         }
 
-        const finalText = nextResult.response.text();
+        const finalText = chainResult.response.text();
+        // Persist the updated message to be used on the next outer iteration
+        currentMessage = finalText || '';
 
         await updateConversation(conversation.id, conversation.state, conversation.history);
 

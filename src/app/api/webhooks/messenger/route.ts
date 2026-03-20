@@ -210,7 +210,12 @@ async function processIncomingMessage(message: {
 
         console.log('[MESSENGER WEBHOOK] Matched to business:', business.id);
 
-        // Add to request queue for async processing
+        // Add to request queue for async processing.
+        // Use messageId as idempotency key — Facebook may deliver the same event twice.
+        const idempotencyKey = message.messageId
+            ? `fb:${business.id}:${message.messageId}`
+            : undefined;
+
         const { error: queueError } = await (supabase
             .from('request_queue') as any)
             .insert({
@@ -227,9 +232,15 @@ async function processIncomingMessage(message: {
                     original: message.rawPayload,
                 },
                 status: 'pending',
+                ...(idempotencyKey ? { idempotency_key: idempotencyKey } : {}),
             });
 
         if (queueError) {
+            // 23505 = unique_violation → duplicate delivery, silently ignore
+            if ((queueError as any).code === '23505') {
+                console.log('[MESSENGER WEBHOOK] Duplicate message ignored:', message.messageId);
+                return;
+            }
             console.error('[MESSENGER WEBHOOK] Queue insert error:', queueError);
             return;
         }

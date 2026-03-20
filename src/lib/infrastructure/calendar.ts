@@ -211,7 +211,7 @@ export async function rescheduleAppointment(
   // Fetch the existing appointment to get duration + google_event_id
   const { data: appt, error: fetchErr } = await (supabase
     .from('appointments') as any)
-    .select('google_event_id, duration_minutes, service_type, customer_name, customer_phone')
+    .select('google_event_id, duration_minutes, service_type, customer_name, customer_phone, appointment_date')
     .eq('id', appointmentId)
     .eq('business_id', businessId)
     .single();

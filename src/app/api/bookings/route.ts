@@ -33,23 +33,28 @@ export async function GET(req: NextRequest) {
 
     // ── CSV export ────────────────────────────────────────────────────────────
     if (format === 'csv') {
+        // RFC 4180 compliant cell escaper: wraps in quotes, escapes inner quotes,
+        // and replaces newlines so a multi-line note never breaks a CSV row.
+        const csvCell = (v: unknown) =>
+            `"${String(v ?? '').replace(/"/g, '""').replace(/\r?\n/g, ' ').replace(/\r/g, ' ')}"`;
+
         const headers = ['Date', 'Time', 'Customer', 'Phone', 'Service', 'Status', 'Price', 'Currency', 'Duration (min)', 'Notes'];
         const csvRows = [
             headers.join(','),
             ...rows.map((b: any) => [
-                b.appointment_date,
-                b.appointment_time,
-                `"${(b.customer_name || '').replace(/"/g, '""')}"`,
-                b.customer_phone,
-                `"${(b.service_type  || '').replace(/"/g, '""')}"`,
-                b.status,
-                b.price ?? '',
-                b.currency ?? '',
-                b.duration_minutes ?? '',
-                `"${(b.notes || '').replace(/"/g, '""')}"`,
+                csvCell(b.appointment_date),
+                csvCell(b.appointment_time),
+                csvCell(b.customer_name),
+                csvCell(b.customer_phone),
+                csvCell(b.service_type),
+                csvCell(b.status),
+                csvCell(b.price ?? ''),
+                csvCell(b.currency ?? ''),
+                csvCell(b.duration_minutes ?? ''),
+                csvCell(b.notes ?? ''),
             ].join(',')),
         ];
-        return new NextResponse(csvRows.join('\n'), {
+        return new NextResponse(csvRows.join('\r\n'), {
             headers: {
                 'Content-Type': 'text/csv',
                 'Content-Disposition': `attachment; filename="bookings_${dateFrom || 'all'}_to_${dateTo || 'all'}.csv"`,
@@ -90,12 +95,20 @@ export async function PATCH(req: NextRequest) {
                 .in('id', ids)
                 .eq('business_id', session.businessId);
 
-            const phones = [...new Set((appts || []).map((a: any) => a.customer_phone))];
+            const phones = [...new Set((appts || []).map((a: any) => a.customer_phone))] as string[];
             for (const phone of phones) {
-                await (supabase.from('customers') as any)
-                    .update({ noshow_count: (supabase as any).sql`noshow_count + 1` })
+                // Fetch current count then increment — Supabase JS doesn't support
+                // arithmetic expressions in .update(), so we do a read-then-write.
+                const { data: cust } = await (supabase.from('customers') as any)
+                    .select('id, noshow_count')
                     .eq('business_id', session.businessId)
-                    .eq('phone', phone);
+                    .eq('phone', phone)
+                    .maybeSingle();
+                if (cust) {
+                    await (supabase.from('customers') as any)
+                        .update({ noshow_count: (cust.noshow_count ?? 0) + 1 })
+                        .eq('id', cust.id);
+                }
             }
         } catch { /* non-fatal */ }
     }
