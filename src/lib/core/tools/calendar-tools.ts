@@ -42,7 +42,7 @@ export const calendarToolsForGemini = [
             },
             customer_phone: {
               type: 'string' as const,
-              description: 'Customer phone number (Sri Lankan format: 0771234567)',
+              description: 'Customer phone number (local format like 0771234567 or international like +94771234567)',
             },
             service_type: {
               type: 'string' as const,
@@ -64,7 +64,7 @@ export const calendarToolsForGemini = [
  * Tool execution handler
  */
 import { getAvailableSlots, createAppointment } from '../../infrastructure/calendar';
-import { lockSlot, unlockSlot, isSlotLocked } from '../../infrastructure/redis';
+import { lockSlot, unlockSlot, isSlotLocked } from '../../infrastructure/redis'; // isSlotLocked used in get_available_slots
 import { getSupabaseClient } from '../../infrastructure/supabase';
 
 export async function executeCalendarTool(
@@ -102,24 +102,20 @@ export async function executeCalendarTool(
     }
 
     case 'book_appointment': {
-      const { date, time, customer_name, customer_phone, service_type, duration = 60 } = args;
+      const { date, time, customer_name, customer_phone, service_type, duration = 60, customer_chat_id } = args;
 
-      // Validate phone number (Sri Lankan format)
-      const phoneRegex = /^0\d{9}$/;
-      if (!phoneRegex.test(customer_phone)) {
-        return { error: 'Invalid phone number. Please provide a valid Sri Lankan number (e.g., 0771234567)' };
+      // Validate phone: accept local (0XXXXXXXXX) or international (+XXXXXXXXXXX) formats
+      const cleaned = customer_phone.replace(/[\s\-\(\)\.]/g, '');
+      const phoneRegex = /^\+?\d{7,15}$/;
+      if (!phoneRegex.test(cleaned)) {
+        return { error: 'Invalid phone number. Please provide a valid phone number (e.g., 0771234567 or +94771234567).' };
       }
 
-      // Check if slot is locked
-      const locked = await isSlotLocked(businessId, date, time);
-      if (locked) {
-        return { error: 'This slot was just booked by another customer. Please choose a different time.' };
-      }
-
-      // Lock the slot
+      // Atomically lock the slot with SET NX + TTL.
+      // If another request already holds the lock, lockSlot returns false.
       const lockAcquired = await lockSlot(businessId, date, time, 300); // 5 min lock
       if (!lockAcquired) {
-        return { error: 'This slot is currently being booked. Please try again in a moment.' };
+        return { error: 'This slot was just booked by another customer. Please choose a different time.' };
       }
 
       try {
@@ -149,7 +145,8 @@ export async function executeCalendarTool(
           appointment_time: time,
           duration_minutes: duration,
           google_event_id: result.eventId,
-          status: 'confirmed',
+          status: 'scheduled',
+          customer_chat_id: customer_chat_id || null,
         });
 
         console.log('[TOOL] ✅ Appointment booked successfully');

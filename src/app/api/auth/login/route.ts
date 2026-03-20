@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseClient } from "@/lib/infrastructure/supabase";
 import * as bcrypt from "bcryptjs";
 import { createSessionToken, createSessionCookie } from "@/lib/auth/session";
+import { rateLimit } from "@/lib/infrastructure/rate-limit";
 
 interface User {
   id: string;
@@ -15,6 +16,15 @@ interface User {
 }
 
 export async function POST(request: NextRequest) {
+  // Strict rate limit for login: 10 attempts per minute per IP
+  const rl = await rateLimit(request, 'auth/login', { limit: 10, windowSeconds: 60 });
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: 'Too many login attempts. Please try again later.' },
+      { status: 429, headers: { 'Retry-After': String(rl.resetAt - Math.floor(Date.now() / 1000)) } }
+    );
+  }
+
   try {
     const body = await request.json();
     const { email, password } = body;
@@ -38,20 +48,14 @@ export async function POST(request: NextRequest) {
       .single()) as { data: User | null; error: any };
 
     if (queryError || !user) {
-      console.log('[LOGIN] User not found:', email, 'Error:', queryError);
       return NextResponse.json(
         { error: "Invalid email or password" },
         { status: 401 }
       );
     }
 
-    console.log('[LOGIN] User found:', email);
-    console.log('[LOGIN] Password hash exists:', !!user.password_hash);
-
     // Verify password
     const isPasswordValid = await bcrypt.compare(password, user.password_hash);
-
-    console.log('[LOGIN] Password validation result:', isPasswordValid);
 
     if (!isPasswordValid) {
       return NextResponse.json(

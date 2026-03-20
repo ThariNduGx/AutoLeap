@@ -1,12 +1,57 @@
 import { google } from 'googleapis';
 import { OAuth2Client } from 'google-auth-library';
 import { getSupabaseClient } from './supabase';
+import { redis } from './redis';
+
+/**
+ * Returns an ISO 8601 UTC offset string (e.g. "+05:30") for the given IANA
+ * timezone and date. Falls back to "+05:30" (Asia/Colombo) on any error.
+ */
+function getTzOffset(timezone: string, date: string): string {
+  try {
+    // Use Intl to get the UTC offset at noon on the given date
+    const testDate = new Date(`${date}T12:00:00Z`);
+    const parts = new Intl.DateTimeFormat('en', {
+      timeZone: timezone,
+      timeZoneName: 'shortOffset',
+    }).formatToParts(testDate);
+
+    const offsetPart = parts.find(p => p.type === 'timeZoneName')?.value ?? '';
+    // offsetPart is like "GMT+5:30" or "GMT-8"
+    const match = offsetPart.match(/GMT([+-]\d{1,2}(?::\d{2})?)/);
+    if (match) {
+      const raw = match[1]; // e.g. "+5:30" or "-8"
+      const [h, m = '00'] = raw.slice(1).split(':');
+      const sign = raw[0];
+      return `${sign}${h.padStart(2, '0')}:${m.padStart(2, '0')}`;
+    }
+    return '+05:30';
+  } catch {
+    return '+05:30';
+  }
+}
 
 const calendar = google.calendar('v3');
 
 /**
  * Get OAuth2 client for a business
  */
+interface BusinessCalendarConfig {
+  google_calendar_token: string | null;
+  timezone: string;
+}
+
+async function getBusinessCalendarConfig(businessId: string): Promise<BusinessCalendarConfig | null> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await (supabase
+    .from('businesses')
+    .select('google_calendar_token, timezone')
+    .eq('id', businessId)
+    .single() as any);
+  if (error || !data) return null;
+  return data;
+}
+
 async function getOAuth2Client(businessId: string): Promise<OAuth2Client | null> {
   const supabase = getSupabaseClient();
 
@@ -45,12 +90,11 @@ export async function getAvailableSlots(
   date: string, // Format: YYYY-MM-DD
   businessHours: { start: string; end: string } = { start: '08:00', end: '18:00' }
 ): Promise<string[]> {
-  const { Redis } = await import('@upstash/redis');
-  // Initialize Redis here to avoid circular imports / missing env vars on init
-  const redis = new Redis({
-    url: process.env.UPSTASH_REDIS_REST_URL!,
-    token: process.env.UPSTASH_REDIS_REST_TOKEN!,
-  });
+  // Fetch business timezone (falls back to Asia/Colombo if not set)
+  const config = await getBusinessCalendarConfig(businessId);
+  const tz = config?.timezone ?? 'Asia/Colombo';
+  // Build the UTC offset string for this timezone at the given date
+  const tzOffset = getTzOffset(tz, date);
 
   const cacheKey = `calendar:availability:${businessId}:${date}`;
 
@@ -69,10 +113,9 @@ export async function getAvailableSlots(
   if (!auth) return [];
 
   try {
-    // ... API Fetch Logic (same as before) ...
-    // Get start and end of day
-    const dayStart = new Date(`${date}T${businessHours.start}:00`);
-    const dayEnd = new Date(`${date}T${businessHours.end}:00`);
+    // Get start and end of day using the business's local timezone offset
+    const dayStart = new Date(`${date}T${businessHours.start}:00${tzOffset}`);
+    const dayEnd = new Date(`${date}T${businessHours.end}:00${tzOffset}`);
 
     console.log('[CALENDAR] 🔄 API Call: Checking availability for', date);
 
@@ -97,9 +140,9 @@ export async function getAvailableSlots(
       currentTime.setHours(currentTime.getHours() + 1);
     }
 
-    // Filter out busy slots
+    // Filter out busy slots using the business's local timezone offset
     const availableSlots = allSlots.filter((slot) => {
-      const slotStart = new Date(`${date}T${slot}:00`);
+      const slotStart = new Date(`${date}T${slot}:00${tzOffset}`);
       const slotEnd = new Date(slotStart.getTime() + 60 * 60 * 1000); // +1 hour
 
       // Check if slot overlaps with any busy time
@@ -144,13 +187,20 @@ export async function createAppointment(
     serviceType: string;
   }
 ): Promise<{ success: boolean; eventId?: string; error?: string }> {
-  const auth = await getOAuth2Client(businessId);
+  const [auth, config] = await Promise.all([
+    getOAuth2Client(businessId),
+    getBusinessCalendarConfig(businessId),
+  ]);
   if (!auth) {
     return { success: false, error: 'Calendar not connected' };
   }
 
+  const tz = config?.timezone ?? 'Asia/Colombo';
+  const tzOffset = getTzOffset(tz, details.date);
+
   try {
-    const startDateTime = new Date(`${details.date}T${details.time}:00`);
+    // Use business timezone offset so the event is created at the correct local time
+    const startDateTime = new Date(`${details.date}T${details.time}:00${tzOffset}`);
     const endDateTime = new Date(startDateTime.getTime() + details.duration * 60 * 1000);
 
     console.log('[CALENDAR] Creating appointment:', details);
@@ -163,11 +213,11 @@ export async function createAppointment(
         description: `Customer: ${details.customerName}\nPhone: ${details.customerPhone}\nService: ${details.serviceType}`,
         start: {
           dateTime: startDateTime.toISOString(),
-          timeZone: 'Asia/Colombo',
+          timeZone: tz,
         },
         end: {
           dateTime: endDateTime.toISOString(),
-          timeZone: 'Asia/Colombo',
+          timeZone: tz,
         },
         reminders: {
           useDefault: false,
@@ -183,11 +233,6 @@ export async function createAppointment(
 
     // Invalidate cache for this date
     try {
-      const { Redis } = await import('@upstash/redis');
-      const redis = new Redis({
-        url: process.env.UPSTASH_REDIS_REST_URL!,
-        token: process.env.UPSTASH_REDIS_REST_TOKEN!,
-      });
       await redis.del(`calendar:availability:${businessId}:${details.date}`);
       console.log('[CALENDAR] 🧹 Cache invalidated for', details.date);
     } catch (err) {

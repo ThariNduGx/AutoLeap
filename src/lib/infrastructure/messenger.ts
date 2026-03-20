@@ -117,37 +117,40 @@ export async function verifyWebhookSignature(
     appSecret: string
 ): Promise<boolean> {
     try {
-        // Extract the signature (format: "sha256=<signature>")
+        // Extract the signature (format: "sha256=<hex>")
         const signatureParts = signature.split('=');
         if (signatureParts.length !== 2 || signatureParts[0] !== 'sha256') {
             console.error('[MESSENGER] Invalid signature format');
             return false;
         }
 
-        const expectedSignature = signatureParts[1];
+        const expectedHex = signatureParts[1];
 
-        // Create HMAC SHA256 hash
         const encoder = new TextEncoder();
+
+        // Import key for verification (constant-time via crypto.subtle.verify)
         const key = await crypto.subtle.importKey(
             'raw',
             encoder.encode(appSecret),
             { name: 'HMAC', hash: 'SHA-256' },
             false,
-            ['sign']
+            ['verify']
         );
 
-        const signatureBuffer = await crypto.subtle.sign(
+        // Decode expected hex signature to bytes
+        if (expectedHex.length % 2 !== 0) return false;
+        const expectedBytes = new Uint8Array(expectedHex.length / 2);
+        for (let i = 0; i < expectedHex.length; i += 2) {
+            expectedBytes[i / 2] = parseInt(expectedHex.slice(i, i + 2), 16);
+        }
+
+        // crypto.subtle.verify performs constant-time HMAC comparison internally
+        const isValid = await crypto.subtle.verify(
             'HMAC',
             key,
+            expectedBytes,
             encoder.encode(body)
         );
-
-        // Convert to hex string
-        const hashArray = Array.from(new Uint8Array(signatureBuffer));
-        const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-
-        // Compare signatures (constant-time comparison would be ideal, but this is acceptable)
-        const isValid = hashHex === expectedSignature;
 
         if (!isValid) {
             console.error('[MESSENGER] Signature verification failed');
@@ -212,13 +215,11 @@ export async function getUserPages(userAccessToken: string): Promise<any[]> {
 
     try {
         console.log('[MESSENGER] Fetching user pages from Facebook...');
-        console.log('[MESSENGER] Token preview:', userAccessToken.substring(0, 20) + '...');
 
         const response = await fetch(url);
         const data = await response.json();
 
         console.log('[MESSENGER] Facebook API Response status:', response.status);
-        console.log('[MESSENGER] Facebook API Response:', JSON.stringify(data, null, 2));
 
         if (!response.ok || 'error' in data) {
             const errorMsg = data.error?.message || 'Unknown Facebook API error';
@@ -277,4 +278,66 @@ export function formatMessengerText(text: string, maxLength: number = 1900): str
     }
 
     return chunks;
+}
+
+/**
+ * Send a message with Messenger quick-reply buttons (for slot selection).
+ * Quick replies appear as tappable chips below the message text.
+ * Facebook limits: max 13 quick replies, title max 20 chars.
+ *
+ * @param pageAccessToken - Page Access Token
+ * @param recipientId - Sender PSID
+ * @param text - Prompt text shown above the buttons
+ * @param slots - Array of time strings in HH:MM format
+ * @param date - YYYY-MM-DD date for the slots (embedded in payload)
+ */
+export async function sendMessengerMessageWithQuickReplies(
+    pageAccessToken: string,
+    recipientId: string,
+    text: string,
+    slots: string[],
+    date: string
+): Promise<boolean> {
+    const url = `${GRAPH_API_BASE}/me/messages?access_token=${pageAccessToken}`;
+
+    // Facebook limit: max 13 quick replies per message
+    const limitedSlots = slots.slice(0, 13);
+
+    const quickReplies = limitedSlots.map(slot => ({
+        content_type: 'text',
+        title: slot,                        // e.g. "09:00"
+        payload: `SLOT_${date}_${slot}`,    // e.g. "SLOT_2026-03-20_09:00"
+    }));
+
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                recipient: { id: recipientId },
+                message: { text, quick_replies: quickReplies },
+                messaging_type: 'RESPONSE',
+            }),
+        });
+
+        const data = await response.json();
+        if (!response.ok || 'error' in data) {
+            console.error('[MESSENGER] Quick replies failed:', (data as any).error?.message);
+            return false;
+        }
+
+        return true;
+    } catch (error) {
+        console.error('[MESSENGER] Quick replies exception:', error);
+        return false;
+    }
+}
+
+/**
+ * Build a slot-selection text prompt for Messenger quick replies.
+ */
+export function buildMessengerSlotPrompt(date: string): string {
+    const d = new Date(`${date}T00:00:00`);
+    const label = d.toLocaleDateString('en-LK', { weekday: 'long', month: 'long', day: 'numeric' });
+    return `Available slots for ${label}. Tap a time to book:`;
 }

@@ -1,4 +1,4 @@
-export type IntentType = 'booking' | 'faq' | 'greeting' | 'status' | 'complaint' | 'unknown';
+export type IntentType = 'booking' | 'cancellation' | 'reschedule' | 'faq' | 'greeting' | 'status' | 'complaint' | 'unknown';
 
 interface IntentPattern {
   intent: IntentType;
@@ -13,6 +13,24 @@ const INTENT_RULES: IntentPattern[] = [
       /^(hi|hello|hey|good morning|good afternoon|good evening)/i,
     ],
     priority: 10,
+  },
+  {
+    intent: 'reschedule',
+    patterns: [
+      /\b(reschedule|rebook|change.*appointment|move.*appointment|different.*time|another.*time|new.*time)\b/i,
+      /\b(change|move|shift)\b.*\b(booking|slot|appointment)\b/i,
+    ],
+    priority: 10, // Same priority as cancellation — check before booking
+  },
+  {
+    intent: 'cancellation',
+    patterns: [
+      /^\/cancel\b/i,
+      /\b(cancel|cancell?ation)\b.*\b(appointment|booking|reservation|slot)\b/i,
+      /\b(cancel|cancell?ation)\b.*\b(my|the)\b/i,
+      /\bdon'?t.*want.*appointment\b/i,
+    ],
+    priority: 10, // Same as greeting — check before booking
   },
   {
     intent: 'booking',
@@ -33,8 +51,10 @@ const INTENT_RULES: IntentPattern[] = [
   {
     intent: 'complaint',
     patterns: [
-      /\b(issue|problem|wrong|broken|cancel|refund|not working|bad|terrible)\b/i,
-      /\b(complaint|complain|disappointed|unhappy)\b/i,
+      // NOTE: 'cancel' intentionally excluded — handled by cancellation intent at higher priority
+      /\b(issue|problem|wrong|broken|refund|not working|bad|terrible|awful|horrible)\b/i,
+      /\b(complaint|complain|disappointed|unhappy|frustrated|angry|upset)\b/i,
+      /\b(never again|worst|useless|scam|rude|poor service)\b/i,
     ],
     priority: 7,
   },
@@ -75,10 +95,19 @@ export function classifyIntent(message: string): IntentType {
 }
 
 /**
- * Determine which model to use based on intent.
+ * Determine which model to use based on intent and the active provider.
  * Cheap models for simple tasks, powerful models for complex ones.
+ * Returns the correct model name for cost tracking.
  */
-export function selectModel(intent: IntentType): 'gpt-4o-mini' | 'gpt-4o' {
+export function selectModel(intent: IntentType): string {
+  // When running in Gemini dev mode, all completions use gemini-flash-latest.
+  // Returning the correct name here ensures cost-tracker records $0 (free tier),
+  // not incorrect OpenAI pricing.
+  const useGemini = process.env.USE_GEMINI_FOR_DEV === 'true';
+  if (useGemini) {
+    return 'gemini-flash-latest';
+  }
+
   switch (intent) {
     case 'greeting':
     case 'status':
@@ -88,6 +117,8 @@ export function selectModel(intent: IntentType): 'gpt-4o-mini' | 'gpt-4o' {
       return 'gpt-4o-mini'; // RAG-assisted, cheap model sufficient
 
     case 'booking':
+    case 'cancellation':
+    case 'reschedule':
     case 'complaint':
       return 'gpt-4o'; // Complex tool-calling, needs powerful model
 

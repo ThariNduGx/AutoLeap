@@ -54,9 +54,6 @@ function DashboardContent() {
                             <div className="p-2 bg-indigo-50 rounded-lg text-indigo-600">
                                 <DollarSign size={24} />
                             </div>
-                            <span className="text-xs font-medium px-2 py-1 bg-green-100 text-green-700 rounded-full">
-                                On Track
-                            </span>
                         </div>
                         <p className="text-gray-500 text-sm">30-Day Spend</p>
                         <h3 className="text-2xl font-bold text-gray-900">${summary.totalCost.toFixed(4)}</h3>
@@ -68,10 +65,18 @@ function DashboardContent() {
                             <div className="p-2 bg-purple-50 rounded-lg text-purple-600">
                                 <TrendingUp size={24} />
                             </div>
+                            {summary.monthlyBudget != null && (() => {
+                                const pct = (summary.projectedMonthly / summary.monthlyBudget) * 100;
+                                const label = pct >= 100 ? 'Over Budget' : pct >= 80 ? 'At Risk' : 'On Track';
+                                const cls = pct >= 100 ? 'bg-red-100 text-red-700' : pct >= 80 ? 'bg-yellow-100 text-yellow-700' : 'bg-green-100 text-green-700';
+                                return <span className={`text-xs font-medium px-2 py-1 rounded-full ${cls}`}>{label}</span>;
+                            })()}
                         </div>
                         <p className="text-gray-500 text-sm">Projected Monthly</p>
                         <h3 className="text-2xl font-bold text-gray-900">${summary.projectedMonthly.toFixed(2)}</h3>
-                        <p className="text-xs text-gray-400 mt-1">Limit: $15.00</p>
+                        {summary.monthlyBudget != null && (
+                            <p className="text-xs text-gray-400 mt-1">Limit: ${Number(summary.monthlyBudget).toFixed(2)}</p>
+                        )}
                     </div>
 
                     {/* Cache Hit Rate */}

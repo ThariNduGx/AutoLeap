@@ -144,9 +144,44 @@ export async function searchFAQs(
 
     console.log('[FAQ] ✅ Found', data?.length || 0, 'matches');
 
-    return data || [];
+    if (data && data.length > 0) {
+      // Increment hit_count for each matched FAQ (fire-and-forget)
+      incrementFAQHits(supabase, data.map((r: any) => r.id).filter(Boolean));
+      return data;
+    }
+
+    // Hybrid fallback: keyword search when semantic returns nothing
+    console.log('[FAQ] Semantic miss — trying keyword fallback...');
+    const { data: kwData, error: kwError } = await (supabase.rpc as any)('search_faqs_keyword', {
+      p_business_id: businessId,
+      p_query: query,
+      p_limit: matchCount,
+    });
+
+    if (kwError) {
+      console.error('[FAQ] Keyword search failed:', kwError);
+      return [];
+    }
+
+    console.log('[FAQ] Keyword results:', kwData?.length || 0);
+    if (kwData && kwData.length > 0) {
+      incrementFAQHits(supabase, kwData.map((r: any) => r.id).filter(Boolean));
+    }
+    return kwData || [];
   } catch (error) {
     console.error('[FAQ] Search exception:', error);
     return [];
   }
+}
+
+/**
+ * Increment hit_count for matched FAQs.
+ * Fire-and-forget — never throws.
+ */
+function incrementFAQHits(supabase: ReturnType<typeof getSupabaseClient>, ids: string[]): void {
+  if (ids.length === 0) return;
+  (supabase.rpc as any)('increment_faq_hits', { p_ids: ids }).then(
+    () => { /* no-op */ },
+    (err: any) => console.warn('[FAQ] hit_count increment failed (non-fatal):', err)
+  );
 }

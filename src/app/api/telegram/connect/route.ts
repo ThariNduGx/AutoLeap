@@ -65,19 +65,27 @@ export async function POST(request: NextRequest) {
         const botInfo = validateData.result;
         console.log('[TELEGRAM] Bot validated:', botInfo.username);
 
-        // Step 2: Register webhook
-        const webhookUrl = `${process.env.NEXT_PUBLIC_BASE_URL || 'https://yourdomain.com'}/api/webhooks/telegram`;
+        // Step 2: Register webhook with a per-business secret
+        const baseUrl = process.env.NEXT_PUBLIC_BASE_URL;
+        if (!baseUrl) {
+            return NextResponse.json(
+                { error: 'Server configuration error: NEXT_PUBLIC_BASE_URL not set' },
+                { status: 500 }
+            );
+        }
+        const webhookUrl = `${baseUrl}/api/webhooks/telegram`;
+
+        // Generate a unique, random secret for this business's bot
+        const webhookSecret = crypto.randomUUID().replace(/-/g, '');
 
         const webhookRes = await fetch(
             `https://api.telegram.org/bot${bot_token}/setWebhook`,
             {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     url: webhookUrl,
-                    secret_token: process.env.TELEGRAM_BOT_TOKEN || 'your-secret-token',
+                    secret_token: webhookSecret,
                 }),
             }
         );
@@ -101,6 +109,7 @@ export async function POST(request: NextRequest) {
             .from('businesses') as any)
             .update({
                 telegram_bot_token: bot_token,
+                telegram_webhook_secret: webhookSecret,
             })
             .eq('id', businessId);
 

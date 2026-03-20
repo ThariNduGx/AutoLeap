@@ -100,7 +100,7 @@ export async function requestBudget(
 }
 
 /**
- * Track daily aggregated cost
+ * Track daily aggregated cost using atomic upsert (no race condition).
  */
 async function trackDailyCost(
   businessId: string,
@@ -111,45 +111,12 @@ async function trackDailyCost(
   const date = new Date().toISOString().split('T')[0];
 
   try {
-    // We use a stored procedure or just an upsert if logic allows. 
-    // For simplicity with RLS and upserts, we'll try to fetch-update or upsert.
-    // However, concurrent upserts can be tricky. A simpler way for this MVP:
-    // We will just insert/update blindly assuming low concurrency for a single biz.
-
-    // First, try to get existing record
-    const { data: existing } = await (supabase
-      .from('business_costs') as any)
-      .select('*')
-      .eq('business_id', businessId)
-      .eq('date', date)
-      .single();
-
-    if (existing) {
-      // Update
-      const newTotal = existing.total_cost + cost;
-      const newCount = existing.query_count + 1;
-      const newHits = existing.cache_hits + (isCacheHit ? 1 : 0);
-
-      await (supabase
-        .from('business_costs') as any)
-        .update({
-          total_cost: newTotal,
-          query_count: newCount,
-          cache_hits: newHits,
-        })
-        .eq('id', existing.id);
-    } else {
-      // Insert
-      await (supabase
-        .from('business_costs') as any)
-        .insert({
-          business_id: businessId,
-          date: date,
-          total_cost: cost,
-          query_count: 1,
-          cache_hits: isCacheHit ? 1 : 0,
-        });
-    }
+    await (supabase.rpc as any)('upsert_daily_cost', {
+      p_business_id: businessId,
+      p_date: date,
+      p_cost: cost,
+      p_is_cache: isCacheHit,
+    });
   } catch (err) {
     console.error('[COST] Failed to track daily cost:', err);
   }
@@ -199,9 +166,66 @@ export async function commitCost(
       model,
       tokens: `${tokensIn}→${tokensOut}`,
     });
+
+    // 4. Check budget thresholds and send alert if needed (fire-and-forget)
+    checkBudgetAlert(businessId).catch(err =>
+      console.warn('[COST] Budget alert check failed (non-fatal):', err)
+    );
   } catch (err) {
     console.error('[COST] Exception during cost commit:', err);
   }
+}
+
+/**
+ * Check if budget usage has crossed a warning threshold (80% or 95%)
+ * and send an alert email if we haven't already sent one today.
+ */
+async function checkBudgetAlert(businessId: string): Promise<void> {
+  const supabase = getSupabaseClient();
+
+  const { data: budget } = await (supabase
+    .from('budgets') as any)
+    .select('current_usage_usd, monthly_budget_usd, budget_alert_sent_at')
+    .eq('business_id', businessId)
+    .single();
+
+  if (!budget || !budget.monthly_budget_usd || budget.monthly_budget_usd <= 0) return;
+
+  const usagePercent = (budget.current_usage_usd / budget.monthly_budget_usd) * 100;
+
+  // Only alert at >= 80%
+  if (usagePercent < 80) return;
+
+  // Don't send more than once per 24 hours
+  if (budget.budget_alert_sent_at) {
+    const lastSent = new Date(budget.budget_alert_sent_at).getTime();
+    if (Date.now() - lastSent < 24 * 60 * 60 * 1000) return;
+  }
+
+  // Fetch owner email
+  const { data: biz } = await (supabase
+    .from('businesses') as any)
+    .select('name, users:user_id (email)')
+    .eq('id', businessId)
+    .single();
+
+  const ownerEmail = (biz?.users as any)?.email;
+  if (!ownerEmail || !biz?.name) return;
+
+  const { sendBudgetAlertEmail } = await import('./email');
+  await sendBudgetAlertEmail({
+    toEmail: ownerEmail,
+    businessName: biz.name,
+    usagePercent,
+    currentUsageUsd: budget.current_usage_usd,
+    monthlyBudgetUsd: budget.monthly_budget_usd,
+  });
+
+  // Record that we sent the alert so we don't spam
+  await (supabase
+    .from('budgets') as any)
+    .update({ budget_alert_sent_at: new Date().toISOString() })
+    .eq('business_id', businessId);
 }
 
 /**

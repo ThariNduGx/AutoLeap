@@ -1,8 +1,15 @@
 'use client';
 
-import { ArrowUpRight, Building2, MessageSquare, Zap, Activity } from 'lucide-react';
+import { ArrowUpRight, Building2, MessageSquare, Zap, Activity, AlertTriangle } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { formatDistanceToNow } from 'date-fns';
+
+interface NearBudgetBusiness {
+    name: string;
+    usedUsd: number;
+    limitUsd: number;
+    pct: number;
+}
 
 interface AdminStats {
     totalBusinesses: number;
@@ -11,6 +18,7 @@ interface AdminStats {
     messages: { completed: number; failed: number; pending: number };
     totalCostUsd: number;
     recentBusinesses: { name: string; createdAt: string }[];
+    nearBudgetBusinesses: NearBudgetBusiness[];
 }
 
 export default function AdminDashboard() {
@@ -94,6 +102,40 @@ export default function AdminDashboard() {
                     </div>
                 ))}
             </div>
+
+            {/* Budget Alerts */}
+            {!loading && stats && stats.nearBudgetBusinesses.length > 0 && (
+                <div className="mb-8 bg-amber-50 border border-amber-200 rounded-2xl p-5">
+                    <div className="flex items-center gap-2 mb-4">
+                        <AlertTriangle size={18} className="text-amber-600" />
+                        <h2 className="text-base font-semibold text-amber-800">
+                            Budget Alerts ({stats.nearBudgetBusinesses.length})
+                        </h2>
+                        <span className="text-xs text-amber-600 ml-auto">≥ 80% of monthly limit used</span>
+                    </div>
+                    <div className="space-y-3">
+                        {stats.nearBudgetBusinesses.map((b, i) => (
+                            <div key={i} className="bg-white rounded-xl p-4 border border-amber-100">
+                                <div className="flex items-center justify-between mb-2">
+                                    <span className="text-sm font-medium text-gray-900">{b.name}</span>
+                                    <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${b.pct >= 100 ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
+                                        {b.pct}%
+                                    </span>
+                                </div>
+                                <div className="w-full bg-gray-100 rounded-full h-1.5">
+                                    <div
+                                        className={`h-1.5 rounded-full ${b.pct >= 100 ? 'bg-red-500' : 'bg-amber-500'}`}
+                                        style={{ width: `${Math.min(100, b.pct)}%` }}
+                                    />
+                                </div>
+                                <p className="text-xs text-gray-500 mt-1">
+                                    ${b.usedUsd.toFixed(4)} used of ${b.limitUsd.toFixed(2)} limit
+                                </p>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 {/* Recent Activity */}

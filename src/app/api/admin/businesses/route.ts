@@ -44,39 +44,51 @@ export async function GET(request: NextRequest) {
             return NextResponse.json({ error: 'Failed to fetch businesses' }, { status: 500 });
         }
 
-        // Get FAQ counts and message counts for each business
-        const businessesWithStats = await Promise.all(
-            (businesses || []).map(async (business: any) => {
-                // Count FAQs and completed messages in parallel
-                const [faqRes, msgRes] = await Promise.all([
-                    (supabase.from('faqs') as any)
-                        .select('*', { count: 'exact', head: true })
-                        .eq('business_id', business.id),
-                    (supabase.from('request_queue') as any)
-                        .select('*', { count: 'exact', head: true })
-                        .eq('business_id', business.id)
-                        .eq('status', 'completed'),
-                ]);
+        const bizList = businesses || [];
+        const businessIds = bizList.map((b: any) => b.id);
 
-                return {
-                    id: business.id,
-                    name: business.name,
-                    isActive: business.is_active !== false,
-                    owner: business.users ? {
-                        email: business.users.email,
-                        name: business.users.name,
-                    } : null,
-                    integrations: {
-                        telegram: !!business.telegram_bot_token,
-                        facebook: !!business.fb_page_id,
-                    },
-                    facebookPageName: business.fb_page_name,
-                    faqCount: faqRes.count || 0,
-                    messageCount: msgRes.count || 0,
-                    createdAt: business.created_at,
-                };
-            })
-        );
+        // Fetch all FAQ and message counts in two bulk queries (avoids N+1)
+        const [faqBulk, msgBulk] = await Promise.all([
+            businessIds.length > 0
+                ? (supabase.from('faq_documents') as any)
+                    .select('business_id')
+                    .in('business_id', businessIds)
+                : Promise.resolve({ data: [] }),
+            businessIds.length > 0
+                ? (supabase.from('request_queue') as any)
+                    .select('business_id')
+                    .in('business_id', businessIds)
+                    .eq('status', 'completed')
+                : Promise.resolve({ data: [] }),
+        ]);
+
+        // Build count maps in memory
+        const faqCountMap = new Map<string, number>();
+        const msgCountMap = new Map<string, number>();
+        for (const row of (faqBulk.data || [])) {
+            faqCountMap.set(row.business_id, (faqCountMap.get(row.business_id) || 0) + 1);
+        }
+        for (const row of (msgBulk.data || [])) {
+            msgCountMap.set(row.business_id, (msgCountMap.get(row.business_id) || 0) + 1);
+        }
+
+        const businessesWithStats = bizList.map((business: any) => ({
+            id: business.id,
+            name: business.name,
+            isActive: business.is_active !== false,
+            owner: business.users ? {
+                email: business.users.email,
+                name: business.users.name,
+            } : null,
+            integrations: {
+                telegram: !!business.telegram_bot_token,
+                facebook: !!business.fb_page_id,
+            },
+            facebookPageName: business.fb_page_name,
+            faqCount: faqCountMap.get(business.id) || 0,
+            messageCount: msgCountMap.get(business.id) || 0,
+            createdAt: business.created_at,
+        }));
 
         return NextResponse.json({
             success: true,

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseClient } from '@/lib/infrastructure/supabase';
 import * as bcrypt from 'bcryptjs';
+import { rateLimit } from '@/lib/infrastructure/rate-limit';
 
 interface SignupRequest {
     businessName: string;
@@ -18,6 +19,15 @@ interface SignupRequest {
  * - Links user to business
  */
 export async function POST(request: NextRequest) {
+    // 5 signups per IP per hour to prevent abuse
+    const rl = await rateLimit(request, 'auth/signup', { limit: 5, windowSeconds: 3600 });
+    if (!rl.allowed) {
+        return NextResponse.json(
+            { error: 'Too many signup attempts. Please try again later.' },
+            { status: 429, headers: { 'Retry-After': String(rl.resetAt - Math.floor(Date.now() / 1000)) } }
+        );
+    }
+
     try {
         const body: SignupRequest = await request.json();
         const { businessName, name, email, password } = body;
@@ -78,7 +88,7 @@ export async function POST(request: NextRequest) {
         if (businessError || !business) {
             console.error('[SIGNUP] Business creation error:', businessError);
             return NextResponse.json(
-                { error: 'Failed to create business account', details: businessError?.message, code: businessError?.code },
+                { error: 'Failed to create business account' },
                 { status: 500 }
             );
         }
@@ -136,7 +146,7 @@ export async function POST(request: NextRequest) {
     } catch (error: any) {
         console.error('[SIGNUP] Exception:', error);
         return NextResponse.json(
-            { error: 'An error occurred during signup', details: error.message },
+            { error: 'An error occurred during signup' },
             { status: 500 }
         );
     }
