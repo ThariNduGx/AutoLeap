@@ -75,7 +75,18 @@ export async function DELETE(
         const supabase = getSupabaseClient();
 
         // Delete related data first to avoid FK violations, then the business
-        const tables = ['request_queue', 'business_costs', 'conversations', 'faqs', 'appointments'];
+        const tables = [
+            'request_queue',
+            'business_costs',
+            'cost_logs',
+            'booking_attempts',
+            'conversations',
+            'faqs',
+            'faq_documents',
+            'faq_embeddings',
+            'appointments',
+            'budgets',
+        ];
         for (const table of tables) {
             const { error } = await (supabase.from(table) as any)
                 .delete()

@@ -184,7 +184,7 @@ export default function ConversationsPage() {
                         filtered.map(conv => (
                             <button
                                 key={conv.id}
-                                onClick={() => setSelected(conv)}
+                                onClick={() => { setSelected(conv); setReplyError(''); setReplyText(''); }}
                                 className={`w-full text-left p-4 border-b border-gray-50 hover:bg-gray-50 transition-colors ${selected?.id === conv.id ? 'bg-indigo-50 border-l-4 border-l-indigo-500' : ''}`}
                             >
                                 <div className="flex items-start justify-between gap-2 mb-1">

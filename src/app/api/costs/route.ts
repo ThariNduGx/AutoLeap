@@ -42,6 +42,13 @@ export async function GET(req: NextRequest) {
         const totalQueries = rows.reduce((sum: number, d: any) => sum + (d.query_count || 0), 0);
         const totalHits = rows.reduce((sum: number, d: any) => sum + (d.cache_hits || 0), 0);
 
+        // Fetch the budget for this business
+        const { data: budget } = await (supabase
+            .from('budgets') as any)
+            .select('monthly_budget_usd')
+            .eq('business_id', businessId)
+            .single();
+
         return NextResponse.json({
             daily: rows,
             summary: {
@@ -50,6 +57,7 @@ export async function GET(req: NextRequest) {
                 projectedMonthly: days > 0 ? (totalCost / days) * 30 : 0,
                 cacheHitRate: totalQueries > 0 ? totalHits / totalQueries : 0,
                 avgCostPerQuery: totalQueries > 0 ? totalCost / totalQueries : 0,
+                monthlyBudget: budget?.monthly_budget_usd ?? null,
             },
         });
     } catch {

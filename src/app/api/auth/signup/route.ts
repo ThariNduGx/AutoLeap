@@ -88,7 +88,7 @@ export async function POST(request: NextRequest) {
         if (businessError || !business) {
             console.error('[SIGNUP] Business creation error:', businessError);
             return NextResponse.json(
-                { error: 'Failed to create business account', details: businessError?.message, code: businessError?.code },
+                { error: 'Failed to create business account' },
                 { status: 500 }
             );
         }
@@ -146,7 +146,7 @@ export async function POST(request: NextRequest) {
     } catch (error: any) {
         console.error('[SIGNUP] Exception:', error);
         return NextResponse.json(
-            { error: 'An error occurred during signup', details: error.message },
+            { error: 'An error occurred during signup' },
             { status: 500 }
         );
     }

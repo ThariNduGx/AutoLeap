@@ -1,6 +1,7 @@
 import { google } from 'googleapis';
 import { OAuth2Client } from 'google-auth-library';
 import { getSupabaseClient } from './supabase';
+import { redis } from './redis';
 
 /**
  * Returns an ISO 8601 UTC offset string (e.g. "+05:30") for the given IANA
@@ -89,12 +90,6 @@ export async function getAvailableSlots(
   date: string, // Format: YYYY-MM-DD
   businessHours: { start: string; end: string } = { start: '08:00', end: '18:00' }
 ): Promise<string[]> {
-  const { Redis } = await import('@upstash/redis');
-  const redis = new Redis({
-    url: process.env.UPSTASH_REDIS_REST_URL!,
-    token: process.env.UPSTASH_REDIS_REST_TOKEN!,
-  });
-
   // Fetch business timezone (falls back to Asia/Colombo if not set)
   const config = await getBusinessCalendarConfig(businessId);
   const tz = config?.timezone ?? 'Asia/Colombo';
@@ -238,11 +233,6 @@ export async function createAppointment(
 
     // Invalidate cache for this date
     try {
-      const { Redis } = await import('@upstash/redis');
-      const redis = new Redis({
-        url: process.env.UPSTASH_REDIS_REST_URL!,
-        token: process.env.UPSTASH_REDIS_REST_TOKEN!,
-      });
       await redis.del(`calendar:availability:${businessId}:${details.date}`);
       console.log('[CALENDAR] 🧹 Cache invalidated for', details.date);
     } catch (err) {

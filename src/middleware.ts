@@ -20,8 +20,19 @@ export async function middleware(request: NextRequest) {
 
     // API routes protection
     const isAdminApiRoute = pathname.startsWith('/api/admin');
+    const isBusinessApiRoute =
+        pathname.startsWith('/api/business') ||
+        pathname.startsWith('/api/conversations') ||
+        pathname.startsWith('/api/bookings') ||
+        pathname.startsWith('/api/costs') ||
+        pathname.startsWith('/api/dashboard');
 
-    // If no session and trying to access protected route
+    // Unauthenticated access to protected API routes → 401
+    if (!session && (isAdminApiRoute || isBusinessApiRoute)) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    // If no session and trying to access protected UI route
     if (!session && (isAdminRoute || isDashboardRoute)) {
         return NextResponse.redirect(new URL('/auth/login', request.url));
     }
@@ -43,6 +54,11 @@ export async function middleware(request: NextRequest) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
         }
 
+        // Admin trying to access business-only API routes
+        if (session.role === 'admin' && isBusinessApiRoute) {
+            return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+        }
+
         // On login page with active session - redirect to appropriate dashboard
         if (pathname === '/auth/login') {
             const redirectUrl = session.role === 'admin' ? '/admin' : '/dashboard';
@@ -58,6 +74,12 @@ export const config = {
         '/dashboard/:path*',
         '/admin/:path*',
         '/api/admin/:path*',
+        '/api/business/:path*',
+        '/api/conversations/:path*',
+        '/api/bookings/:path*',
+        '/api/costs',
+        '/api/costs/:path*',
+        '/api/dashboard/:path*',
         '/auth/login',
     ],
 };
