@@ -542,9 +542,36 @@ async function handleFAQ(
   const { llm } = await import('../infrastructure/llm-adapter');
 
   try {
-    const relevantFAQs = await searchFAQs(businessId, message.text, 0.6, 3);
+    // Fetch active services + tiers in parallel with FAQ search
+    const [relevantFAQs, { data: svcRows }] = await Promise.all([
+      searchFAQs(businessId, message.text, 0.6, 3),
+      (getSupabaseClient().from('services') as any)
+        .select('name, description, duration_minutes, price, currency, tiers')
+        .eq('business_id', businessId)
+        .eq('is_active', true)
+        .order('sort_order', { ascending: true }),
+    ]);
 
-    if (relevantFAQs.length === 0) {
+    // Build a services pricing block (injected into the FAQ context so the AI
+    // can answer pricing questions even if there's no dedicated FAQ for them)
+    let servicesPricingBlock = '';
+    if (svcRows && svcRows.length > 0) {
+      servicesPricingBlock = '\n\nSERVICES & PRICING:\n' +
+        (svcRows as any[]).map((s: any) => {
+          const cur = s.currency || 'LKR';
+          const hasTiers = Array.isArray(s.tiers) && s.tiers.length > 0;
+          if (hasTiers) {
+            const tierLines = (s.tiers as any[])
+              .map((t: any) => `  • ${t.name}: ${cur} ${Number(t.price).toLocaleString()} (${t.duration_minutes ?? s.duration_minutes} min)`)
+              .join('\n');
+            return `${s.name}:\n${tierLines}`;
+          }
+          const price = s.price != null ? ` — ${cur} ${Number(s.price).toLocaleString()}` : '';
+          return `${s.name}${price} (${s.duration_minutes} min)`;
+        }).join('\n');
+    }
+
+    if (relevantFAQs.length === 0 && !servicesPricingBlock) {
       return {
         success: true,
         response: "I don't have information about that. Let me connect you with a team member who can help.",
@@ -552,22 +579,21 @@ async function handleFAQ(
       };
     }
 
-    const context = relevantFAQs
-      .map((faq, i) => `[${i + 1}] Q: ${faq.question}\nA: ${faq.answer}`)
-      .join('\n\n');
+    const faqContext = relevantFAQs.length > 0
+      ? '\n\nFAQs:\n' + relevantFAQs.map((faq, i) => `[${i + 1}] Q: ${faq.question}\nA: ${faq.answer}`).join('\n\n')
+      : '';
 
-    const prompt = `You are a helpful assistant for a service business. Answer the customer's question using ONLY the provided FAQs. If the answer isn't in the FAQs, say you don't know.
-
-FAQs:
-${context}
+    const prompt = `You are a helpful assistant for a service business. Answer the customer's question using the provided FAQs and/or services pricing information below.
+${faqContext}${servicesPricingBlock}
 
 Customer Question: ${message.text}
 
 Instructions:
-- Answer briefly and naturally
-- Cite the FAQ number if relevant
-- Keep response under 100 words
-- Be friendly and professional`;
+- If the customer asks about prices, list ALL relevant packages with their prices clearly.
+- Answer briefly and naturally.
+- If you cannot find the answer, say you don't have that information.
+- Keep response under 150 words.
+- Be friendly and professional.`;
 
     const response = await llm.chat.completions.create({
       model: model as any,
@@ -615,7 +641,7 @@ async function handleBooking(
         .eq('id', businessId)
         .single(),
       (getSupabaseClient().from('services') as any)
-        .select('name, description, duration_minutes, price')
+        .select('name, description, duration_minutes, price, currency, tiers')
         .eq('business_id', businessId)
         .eq('is_active', true)
         .order('sort_order', { ascending: true })
@@ -623,16 +649,39 @@ async function handleBooking(
     ]);
     const tz = bizTz?.timezone ?? 'Asia/Colombo';
 
-    // Build a readable services menu to inject into the system prompt
+    // Build a human-readable services + pricing menu for the AI prompt
     const servicesMenu = (serviceRows && serviceRows.length > 0)
-      ? `\n\nAVAILABLE SERVICES:\n` +
+      ? `\n\nAVAILABLE SERVICES & PRICING:\n` +
         (serviceRows as any[]).map((s: any, i: number) => {
-          let line = `${i + 1}. ${s.name} (${s.duration_minutes} min)`;
-          if (s.price != null) line += ` — $${Number(s.price).toFixed(2)}`;
-          if (s.description) line += `\n   ${s.description}`;
+          const currency: string = s.currency || 'LKR';
+          const hasTiers = Array.isArray(s.tiers) && s.tiers.length > 0;
+
+          let line = `${i + 1}. **${s.name}**`;
+          if (s.description) line += ` — ${s.description}`;
+
+          if (hasTiers) {
+            // List each package with name, price, and optional duration override
+            line += `\n   Packages:`;
+            (s.tiers as any[]).forEach((t: any, ti: number) => {
+              const dur = t.duration_minutes ?? s.duration_minutes;
+              line += `\n   ${String.fromCharCode(97 + ti)}) ${t.name}: ${currency} ${Number(t.price).toLocaleString()} (${dur} min)`;
+            });
+            line += `\n   ← Ask the customer to pick one of these packages.`;
+          } else {
+            // Single price
+            if (s.price != null) {
+              line += ` | ${currency} ${Number(s.price).toLocaleString()}`;
+            }
+            line += ` (${s.duration_minutes} min)`;
+          }
           return line;
-        }).join('\n') +
-        `\n\nIf the customer hasn't specified a service, present this menu and ask them to choose one before proceeding.`
+        }).join('\n\n') +
+        `\n\nIMPORTANT PRICING RULES:
+- If the customer asks about prices or "how much", show the relevant service and its packages.
+- If a service has packages, ask the customer to choose a specific package BEFORE proceeding.
+- Use the EXACT package name (e.g. "Hydra Cleanup") as the service_type when calling book_appointment.
+- Use the package's duration_minutes (not the service default) when calling book_appointment.
+- If the customer hasn't specified a service yet, present the full menu first.`
       : '';
 
     // Get or create conversation
@@ -670,22 +719,23 @@ async function handleBooking(
       conversation.state.selected_date = date;
       conversation.state.selected_time = time;
     } else if (isFirstMessage) {
-      currentMessage = `You are a booking assistant for a Sri Lankan service business.${servicesMenu}
+      currentMessage = `You are a friendly booking assistant for a service business.${servicesMenu}
 
 Customer message: "${message.text}"
 
-WORKFLOW:
-1. If services are listed above and no service is selected yet, present the menu and ask the customer to choose
-2. Extract info from message (service, date, time, name, phone)
-3. If you have a date, call get_available_slots to check availability
-4. The system will show available slots as buttons — just ask the customer to pick one
-5. Once a slot is picked, ask for name and phone number
-6. Call book_appointment when you have: date, time, customer_name, customer_phone, service_type
+BOOKING WORKFLOW:
+1. If the customer asks about prices or services, present the menu with package prices.
+2. If a service has multiple packages, ask the customer to choose one (e.g. "Would you like Normal Cleanup, Hydra Cleanup, or Extra Gold Cleanup?").
+3. Once the service/package is clear, ask for a preferred date (or suggest one).
+4. Call get_available_slots for the date. Show available slots.
+5. Ask the customer to pick a time slot.
+6. Ask for their full name and phone number.
+7. Call book_appointment with: date, time, customer_name, customer_phone, service_type (exact package name if applicable), duration (from tier if applicable).
 
 Current date: ${new Date().toLocaleDateString('en-CA', { timeZone: tz })}
 Tomorrow: ${new Date(Date.now() + 86400000).toLocaleDateString('en-CA', { timeZone: tz })}
 
-Start by checking availability if you can determine the date. Accept any valid phone number format.`;
+Keep replies concise and friendly. Accept any valid phone number format.`;
     } else {
       currentMessage = `Customer's new message: "${message.text}"
 

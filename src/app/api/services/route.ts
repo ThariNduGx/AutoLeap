@@ -5,17 +5,42 @@ import { getSession, hasRole } from '@/lib/auth/session';
 export const dynamic = 'force-dynamic';
 
 /**
+ * Tier shape: { name: string, price: number, currency?: string, duration_minutes?: number }
+ */
+interface Tier {
+  name: string;
+  price: number;
+  currency?: string;
+  duration_minutes?: number;
+}
+
+function validateTiers(raw: unknown): Tier[] | null {
+  if (!Array.isArray(raw)) return null;
+  for (const t of raw) {
+    if (typeof t !== 'object' || !t) return null;
+    if (typeof (t as any).name !== 'string' || !(t as any).name.trim()) return null;
+    if (typeof (t as any).price !== 'number' || (t as any).price < 0) return null;
+    if ((t as any).duration_minutes !== undefined) {
+      const d = (t as any).duration_minutes;
+      if (typeof d !== 'number' || d < 5 || d > 480) return null;
+    }
+  }
+  return raw as Tier[];
+}
+
+/**
  * GET /api/services
- * List all services for the authenticated business (active + inactive).
+ * List all services for the authenticated business.
  *
  * POST /api/services
- * Create a new service. Body: { name, description?, duration_minutes, price? }
- *
- * DELETE /api/services?id=UUID
- * Delete a service by ID.
+ * Create a new service.
+ * Body: { name, description?, duration_minutes, price?, currency?, tiers? }
  *
  * PATCH /api/services?id=UUID
- * Update a service (name, description, duration_minutes, price, is_active, sort_order).
+ * Update a service (any combination of its fields + tiers).
+ *
+ * DELETE /api/services?id=UUID
+ * Delete a service.
  */
 
 export async function GET(req: NextRequest) {
@@ -27,7 +52,7 @@ export async function GET(req: NextRequest) {
   const supabase = getSupabaseClient();
   const { data, error } = await (supabase
     .from('services') as any)
-    .select('id, name, description, duration_minutes, price, is_active, sort_order, created_at')
+    .select('id, name, description, duration_minutes, price, currency, tiers, is_active, sort_order, created_at')
     .eq('business_id', session.businessId)
     .order('sort_order', { ascending: true })
     .order('created_at', { ascending: true });
@@ -51,7 +76,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'duration_minutes must be between 5 and 480' }, { status: 400 });
   }
 
-  const price = body.price != null ? parseFloat(body.price) : null;
+  // Validate tiers if provided
+  let tiers: Tier[] = [];
+  if (body.tiers !== undefined) {
+    const validated = validateTiers(body.tiers);
+    if (validated === null) {
+      return NextResponse.json(
+        { error: 'Invalid tiers format. Each tier needs: name (string), price (number ≥ 0), optional duration_minutes (5–480).' },
+        { status: 400 }
+      );
+    }
+    tiers = validated;
+  }
+
+  const price = body.price != null && body.price !== '' ? parseFloat(body.price) : null;
 
   const supabase = getSupabaseClient();
   const { data, error } = await (supabase
@@ -61,7 +99,9 @@ export async function POST(req: NextRequest) {
       name,
       description: (body.description || '').trim() || null,
       duration_minutes: duration,
-      price: price && !isNaN(price) ? price : null,
+      price: price != null && !isNaN(price) ? price : null,
+      currency: (body.currency || 'LKR').toUpperCase(),
+      tiers,
     })
     .select()
     .single();
@@ -81,10 +121,22 @@ export async function PATCH(req: NextRequest) {
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
 
   const body = await req.json();
-  const allowed = ['name', 'description', 'duration_minutes', 'price', 'is_active', 'sort_order'] as const;
+  const scalar = ['name', 'description', 'duration_minutes', 'price', 'currency', 'is_active', 'sort_order'] as const;
   const updates: Record<string, unknown> = {};
-  for (const key of allowed) {
+  for (const key of scalar) {
     if (key in body) updates[key] = body[key];
+  }
+
+  // Handle tiers separately (needs validation)
+  if ('tiers' in body) {
+    const validated = validateTiers(body.tiers);
+    if (validated === null) {
+      return NextResponse.json(
+        { error: 'Invalid tiers format. Each tier needs: name (string), price (number ≥ 0), optional duration_minutes (5–480).' },
+        { status: 400 }
+      );
+    }
+    updates.tiers = validated;
   }
 
   if (Object.keys(updates).length === 0) {
