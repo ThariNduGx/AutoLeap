@@ -12,7 +12,13 @@ interface QueueItem {
   business_id: string;
   raw_payload: any;
   status: 'pending' | 'processing' | 'completed' | 'failed';
+  retry_count: number;
   created_at: string;
+}
+
+/** Exponential backoff: 2^attempt minutes (2m, 4m, 8m) */
+function retryDelayMinutes(attempt: number): number {
+  return Math.pow(2, attempt + 1);
 }
 
 interface ProcessingResult {
@@ -74,9 +80,34 @@ export async function processQueue(batchSize: number = 10): Promise<number> {
     } catch (err) {
       console.error('[QUEUE] Failed to process item:', item.id, err);
 
-      await (supabase.from('request_queue') as any)
-        .update({ status: 'failed' })
-        .eq('id', item.id);
+      const retryCount = (item.retry_count ?? 0) + 1;
+      const MAX_RETRIES = 3;
+
+      if (retryCount < MAX_RETRIES) {
+        // Schedule a retry with exponential backoff
+        const delayMs = retryDelayMinutes(item.retry_count ?? 0) * 60 * 1000;
+        const retryAt = new Date(Date.now() + delayMs).toISOString();
+        await (supabase.from('request_queue') as any)
+          .update({
+            status: 'failed',
+            retry_count: retryCount,
+            retry_at: retryAt,
+            error_message: err instanceof Error ? err.message : String(err),
+          })
+          .eq('id', item.id);
+        console.warn(`[QUEUE] Scheduled retry ${retryCount}/${MAX_RETRIES} for item ${item.id} at ${retryAt}`);
+      } else {
+        // Dead-lettered: give up and mark permanently failed
+        await (supabase.from('request_queue') as any)
+          .update({
+            status: 'failed',
+            retry_count: retryCount,
+            retry_at: null,
+            error_message: err instanceof Error ? err.message : String(err),
+          })
+          .eq('id', item.id);
+        console.error(`[QUEUE] ☠️ Dead-lettered item ${item.id} after ${retryCount} attempts`);
+      }
     }
   }
 
@@ -349,12 +380,16 @@ function extractMessengerMessage(payload: any): { text: string; userId: string; 
 
 async function markCompleted(itemId: string, response: string): Promise<void> {
   const supabase = getSupabaseClient();
-  await (supabase.from('request_queue') as any).update({ status: 'completed' }).eq('id', itemId);
+  await (supabase.from('request_queue') as any)
+    .update({ status: 'completed', retry_at: null, error_message: null })
+    .eq('id', itemId);
 }
 
 async function markFailed(itemId: string, error: string): Promise<void> {
   const supabase = getSupabaseClient();
-  await (supabase.from('request_queue') as any).update({ status: 'failed' }).eq('id', itemId);
+  await (supabase.from('request_queue') as any)
+    .update({ status: 'failed', error_message: error })
+    .eq('id', itemId);
 }
 
 async function sendResponseToTelegram(
@@ -967,6 +1002,43 @@ async function handleCancellation(
     .eq('customer_chat_id', message.chatId);
 
   console.log('[CANCEL] ✅ Appointment cancelled:', appointment.id);
+
+  // Notify the business owner via Telegram DM + email
+  try {
+    const { data: biz } = await (supabase.from('businesses') as any)
+      .select('name, telegram_bot_token, owner_telegram_chat_id, users:user_id (email)')
+      .eq('id', businessId)
+      .single();
+
+    if (biz?.telegram_bot_token && biz?.owner_telegram_chat_id) {
+      const { sendOwnerNotification } = await import('../infrastructure/telegram');
+      await sendOwnerNotification(
+        biz.telegram_bot_token,
+        biz.owner_telegram_chat_id,
+        `📅 *Booking Cancelled*\n\n` +
+        `Customer (chat: ${message.chatId}) cancelled their appointment:\n\n` +
+        `• *Service:* ${appointment.service_type}\n` +
+        `• *Date:* ${appointment.appointment_date}\n` +
+        `• *Time:* ${appointment.appointment_time}\n\n` +
+        `The calendar event has been removed.`
+      );
+    }
+
+    const ownerEmail = (biz?.users as any)?.email;
+    if (ownerEmail && biz?.name) {
+      const { sendCancellationAlertEmail } = await import('../infrastructure/email');
+      await sendCancellationAlertEmail({
+        toEmail: ownerEmail,
+        businessName: biz.name,
+        customerChatId: message.chatId,
+        serviceType: appointment.service_type,
+        appointmentDate: appointment.appointment_date,
+        appointmentTime: appointment.appointment_time,
+      });
+    }
+  } catch (notifyErr) {
+    console.warn('[CANCEL] Owner notification failed (non-fatal):', notifyErr);
+  }
 
   return {
     success: true,

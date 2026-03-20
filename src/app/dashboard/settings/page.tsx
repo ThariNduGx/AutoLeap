@@ -1,7 +1,57 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Building2, MessageSquare, Facebook, User, Shield, Save, Loader2, CheckCircle2, XCircle, X, Eye, EyeOff, Calendar } from 'lucide-react';
+import {
+    Building2, MessageSquare, Facebook, User, Shield, Save, Loader2,
+    CheckCircle2, XCircle, X, Eye, EyeOff, Calendar, Clock, Globe,
+    AlertTriangle,
+} from 'lucide-react';
+
+// IANA timezone list (subset — most common zones)
+const TIMEZONES = [
+    'Asia/Colombo',
+    'Asia/Kolkata',
+    'Asia/Dubai',
+    'Asia/Singapore',
+    'Asia/Tokyo',
+    'Asia/Bangkok',
+    'Asia/Dhaka',
+    'Asia/Karachi',
+    'Asia/Kathmandu',
+    'Asia/Yangon',
+    'Europe/London',
+    'Europe/Paris',
+    'Europe/Berlin',
+    'America/New_York',
+    'America/Chicago',
+    'America/Denver',
+    'America/Los_Angeles',
+    'America/Toronto',
+    'Australia/Sydney',
+    'Pacific/Auckland',
+    'UTC',
+];
+
+const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'] as const;
+type Day = typeof DAYS[number];
+
+interface DayHours {
+    open: string;
+    close: string;
+    enabled: boolean;
+}
+
+type BusinessHours = Record<Day, DayHours>;
+
+const DEFAULT_HOURS: BusinessHours = {
+    monday:    { open: '08:00', close: '18:00', enabled: true },
+    tuesday:   { open: '08:00', close: '18:00', enabled: true },
+    wednesday: { open: '08:00', close: '18:00', enabled: true },
+    thursday:  { open: '08:00', close: '18:00', enabled: true },
+    friday:    { open: '08:00', close: '18:00', enabled: true },
+    saturday:  { open: '09:00', close: '14:00', enabled: false },
+    sunday:    { open: '09:00', close: '14:00', enabled: false },
+};
 
 interface BusinessSettings {
     id: string;
@@ -12,6 +62,54 @@ interface BusinessSettings {
     owner_telegram_chat_id: string | null;
     has_google_calendar: boolean;
     google_calendar_email: string | null;
+    timezone: string;
+    business_hours: BusinessHours | null;
+}
+
+/** Inline "are you sure?" confirmation button component */
+function ConfirmButton({
+    label,
+    confirmLabel,
+    onConfirm,
+    disabled,
+}: {
+    label: string;
+    confirmLabel: string;
+    onConfirm: () => void;
+    disabled?: boolean;
+}) {
+    const [confirming, setConfirming] = useState(false);
+
+    if (confirming) {
+        return (
+            <div className="flex items-center gap-2">
+                <span className="text-sm text-gray-600">Are you sure?</span>
+                <button
+                    onClick={() => { onConfirm(); setConfirming(false); }}
+                    disabled={disabled}
+                    className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
+                >
+                    {confirmLabel}
+                </button>
+                <button
+                    onClick={() => setConfirming(false)}
+                    className="px-3 py-1.5 border border-gray-300 text-sm font-medium text-gray-600 hover:bg-gray-50 rounded-lg transition-colors"
+                >
+                    Cancel
+                </button>
+            </div>
+        );
+    }
+
+    return (
+        <button
+            onClick={() => setConfirming(true)}
+            disabled={disabled}
+            className="px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
+        >
+            {label}
+        </button>
+    );
 }
 
 export default function SettingsPage() {
@@ -28,6 +126,16 @@ export default function SettingsPage() {
     const [ownerChatId, setOwnerChatId] = useState('');
     const [savingChatId, setSavingChatId] = useState(false);
     const [chatIdSaved, setChatIdSaved] = useState(false);
+
+    // Timezone
+    const [timezone, setTimezone] = useState('Asia/Colombo');
+    const [savingTimezone, setSavingTimezone] = useState(false);
+    const [timezoneSaved, setTimezoneSaved] = useState(false);
+
+    // Business hours
+    const [businessHours, setBusinessHours] = useState<BusinessHours>(DEFAULT_HOURS);
+    const [savingHours, setSavingHours] = useState(false);
+    const [hoursSaved, setHoursSaved] = useState(false);
 
     // Change password modal
     const [showPasswordModal, setShowPasswordModal] = useState(false);
@@ -50,6 +158,8 @@ export default function SettingsPage() {
                 setBusiness(data.business);
                 setBusinessName(data.business.name || '');
                 setOwnerChatId(data.business.owner_telegram_chat_id || '');
+                setTimezone(data.business.timezone || 'Asia/Colombo');
+                setBusinessHours(data.business.business_hours || DEFAULT_HOURS);
             }
         } catch (error) {
             console.error('Failed to fetch settings:', error);
@@ -58,17 +168,21 @@ export default function SettingsPage() {
         }
     }
 
+    async function patchSettings(updates: Record<string, unknown>) {
+        const res = await fetch('/api/business/settings', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(updates),
+        });
+        return res.ok;
+    }
+
     async function handleSaveBusinessName() {
         if (!businessName.trim()) return;
         setSavingName(true);
         setNameSaved(false);
         try {
-            const res = await fetch('/api/business/settings', {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name: businessName.trim() }),
-            });
-            if (res.ok) {
+            if (await patchSettings({ name: businessName.trim() })) {
                 setNameSaved(true);
                 fetchBusinessSettings();
                 setTimeout(() => setNameSaved(false), 3000);
@@ -82,18 +196,46 @@ export default function SettingsPage() {
         setSavingChatId(true);
         setChatIdSaved(false);
         try {
-            const res = await fetch('/api/business/settings', {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ owner_telegram_chat_id: ownerChatId }),
-            });
-            if (res.ok) {
+            if (await patchSettings({ owner_telegram_chat_id: ownerChatId })) {
                 setChatIdSaved(true);
                 setTimeout(() => setChatIdSaved(false), 3000);
             }
         } finally {
             setSavingChatId(false);
         }
+    }
+
+    async function handleSaveTimezone() {
+        setSavingTimezone(true);
+        setTimezoneSaved(false);
+        try {
+            if (await patchSettings({ timezone })) {
+                setTimezoneSaved(true);
+                setTimeout(() => setTimezoneSaved(false), 3000);
+            }
+        } finally {
+            setSavingTimezone(false);
+        }
+    }
+
+    async function handleSaveBusinessHours() {
+        setSavingHours(true);
+        setHoursSaved(false);
+        try {
+            if (await patchSettings({ business_hours: businessHours })) {
+                setHoursSaved(true);
+                setTimeout(() => setHoursSaved(false), 3000);
+            }
+        } finally {
+            setSavingHours(false);
+        }
+    }
+
+    function updateDayHours(day: Day, field: keyof DayHours, value: string | boolean) {
+        setBusinessHours(prev => ({
+            ...prev,
+            [day]: { ...prev[day], [field]: value },
+        }));
     }
 
     async function handleChangePassword() {
@@ -130,55 +272,31 @@ export default function SettingsPage() {
     }
 
     async function handleDisconnectGoogleCalendar() {
-        if (!confirm('Are you sure you want to disconnect Google Calendar? Booking features will stop working.')) return;
         setSaving(true);
         try {
-            const res = await fetch('/api/business/settings', {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ disconnect_google_calendar: true }),
-            });
-            if (res.ok) {
+            if (await patchSettings({ disconnect_google_calendar: true })) {
                 fetchBusinessSettings();
-            } else {
-                alert('Failed to disconnect Google Calendar');
             }
-        } catch {
-            alert('Error disconnecting Google Calendar');
         } finally {
             setSaving(false);
         }
     }
 
     async function handleDisconnectFacebook() {
-        if (!confirm('Are you sure you want to disconnect your Facebook Page?')) return;
         setSaving(true);
         try {
             const res = await fetch('/api/business/settings/facebook/disconnect', { method: 'POST' });
-            if (res.ok) {
-                fetchBusinessSettings();
-            } else {
-                alert('Failed to disconnect Facebook Page');
-            }
-        } catch {
-            alert('Error disconnecting Facebook Page');
+            if (res.ok) fetchBusinessSettings();
         } finally {
             setSaving(false);
         }
     }
 
     async function handleDisconnectTelegram() {
-        if (!confirm('Are you sure you want to disconnect your Telegram bot?')) return;
         setSaving(true);
         try {
             const res = await fetch('/api/telegram/disconnect', { method: 'POST' });
-            if (res.ok) {
-                fetchBusinessSettings();
-            } else {
-                alert('Failed to disconnect Telegram bot');
-            }
-        } catch {
-            alert('Error disconnecting Telegram bot');
+            if (res.ok) fetchBusinessSettings();
         } finally {
             setSaving(false);
         }
@@ -202,7 +320,7 @@ export default function SettingsPage() {
             </div>
 
             <div className="space-y-6">
-                {/* Business Profile Section */}
+                {/* ── Business Profile ── */}
                 <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
                     <div className="flex items-center gap-3 mb-6">
                         <div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center">
@@ -215,6 +333,7 @@ export default function SettingsPage() {
                     </div>
 
                     <div className="space-y-4">
+                        {/* Business Name */}
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-2">Business Name</label>
                             <div className="flex gap-2">
@@ -235,6 +354,8 @@ export default function SettingsPage() {
                                 </button>
                             </div>
                         </div>
+
+                        {/* Business ID */}
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-2">Business ID</label>
                             <input
@@ -247,7 +368,106 @@ export default function SettingsPage() {
                     </div>
                 </div>
 
-                {/* Integrations Section */}
+                {/* ── Timezone & Hours ── */}
+                <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+                    <div className="flex items-center gap-3 mb-6">
+                        <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center">
+                            <Globe size={20} className="text-amber-600" />
+                        </div>
+                        <div>
+                            <h2 className="text-lg font-semibold text-gray-900">Timezone & Business Hours</h2>
+                            <p className="text-sm text-gray-500">Controls when customers can book appointments</p>
+                        </div>
+                    </div>
+
+                    <div className="space-y-6">
+                        {/* Timezone */}
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Timezone</label>
+                            <div className="flex gap-2">
+                                <select
+                                    value={timezone}
+                                    onChange={e => setTimezone(e.target.value)}
+                                    className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-gray-900 outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+                                >
+                                    {TIMEZONES.map(tz => (
+                                        <option key={tz} value={tz}>{tz}</option>
+                                    ))}
+                                </select>
+                                <button
+                                    onClick={handleSaveTimezone}
+                                    disabled={savingTimezone || timezone === business?.timezone}
+                                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg flex items-center gap-2 disabled:opacity-50 transition-colors"
+                                >
+                                    {savingTimezone ? <Loader2 size={14} className="animate-spin" /> : timezoneSaved ? <CheckCircle2 size={14} /> : <Save size={14} />}
+                                    {timezoneSaved ? 'Saved!' : 'Save'}
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Business Hours */}
+                        <div>
+                            <div className="flex items-center justify-between mb-3">
+                                <label className="text-sm font-medium text-gray-700">Business Hours</label>
+                                <button
+                                    onClick={handleSaveBusinessHours}
+                                    disabled={savingHours}
+                                    className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium rounded-lg flex items-center gap-1.5 disabled:opacity-50 transition-colors"
+                                >
+                                    {savingHours ? <Loader2 size={12} className="animate-spin" /> : hoursSaved ? <CheckCircle2 size={12} /> : <Save size={12} />}
+                                    {hoursSaved ? 'Saved!' : 'Save Hours'}
+                                </button>
+                            </div>
+                            <div className="space-y-2">
+                                {DAYS.map(day => (
+                                    <div key={day} className="flex items-center gap-3 py-2 border-b border-gray-100 last:border-0">
+                                        {/* Toggle */}
+                                        <button
+                                            onClick={() => updateDayHours(day, 'enabled', !businessHours[day]?.enabled)}
+                                            className={`w-10 h-5 rounded-full transition-colors flex-shrink-0 relative ${
+                                                businessHours[day]?.enabled ? 'bg-indigo-600' : 'bg-gray-300'
+                                            }`}
+                                        >
+                                            <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${
+                                                businessHours[day]?.enabled ? 'translate-x-5' : 'translate-x-0.5'
+                                            }`} />
+                                        </button>
+
+                                        {/* Day label */}
+                                        <span className={`w-24 text-sm font-medium capitalize ${
+                                            businessHours[day]?.enabled ? 'text-gray-900' : 'text-gray-400'
+                                        }`}>
+                                            {day}
+                                        </span>
+
+                                        {/* Time inputs */}
+                                        {businessHours[day]?.enabled ? (
+                                            <div className="flex items-center gap-2 flex-1">
+                                                <input
+                                                    type="time"
+                                                    value={businessHours[day]?.open || '08:00'}
+                                                    onChange={e => updateDayHours(day, 'open', e.target.value)}
+                                                    className="px-2 py-1 border border-gray-300 rounded text-sm outline-none focus:ring-1 focus:ring-indigo-500"
+                                                />
+                                                <span className="text-gray-400 text-sm">to</span>
+                                                <input
+                                                    type="time"
+                                                    value={businessHours[day]?.close || '18:00'}
+                                                    onChange={e => updateDayHours(day, 'close', e.target.value)}
+                                                    className="px-2 py-1 border border-gray-300 rounded text-sm outline-none focus:ring-1 focus:ring-indigo-500"
+                                                />
+                                            </div>
+                                        ) : (
+                                            <span className="text-sm text-gray-400 italic">Closed</span>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                {/* ── Integrations ── */}
                 <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
                     <div className="flex items-center gap-3 mb-6">
                         <div className="w-10 h-10 rounded-full bg-purple-100 flex items-center justify-center">
@@ -292,13 +512,12 @@ export default function SettingsPage() {
                                             <p className="text-sm font-medium text-gray-900">Bot Connected</p>
                                             <p className="text-xs text-gray-500 mt-1">Your Telegram bot is active and receiving messages</p>
                                         </div>
-                                        <button
-                                            onClick={handleDisconnectTelegram}
+                                        <ConfirmButton
+                                            label="Disconnect"
+                                            confirmLabel="Yes, Disconnect"
+                                            onConfirm={handleDisconnectTelegram}
                                             disabled={saving}
-                                            className="px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
-                                        >
-                                            {saving ? <Loader2 className="animate-spin" size={16} /> : 'Disconnect'}
-                                        </button>
+                                        />
                                     </div>
                                 </div>
                             ) : (
@@ -311,9 +530,9 @@ export default function SettingsPage() {
                         {/* Owner Telegram notification chat ID */}
                         {business?.telegram_bot_token && (
                             <div className="p-4 border border-indigo-100 bg-indigo-50 rounded-xl">
-                                <h4 className="text-sm font-semibold text-gray-900 mb-1">Receive Complaint Alerts</h4>
+                                <h4 className="text-sm font-semibold text-gray-900 mb-1">Receive Complaint & Cancellation Alerts</h4>
                                 <p className="text-xs text-gray-500 mb-3">
-                                    Enter your personal Telegram Chat ID so the bot can DM you when a complaint arrives.{' '}
+                                    Enter your personal Telegram Chat ID so the bot can DM you when a complaint or cancellation arrives.{' '}
                                     <a href="https://t.me/userinfobot" target="_blank" rel="noopener noreferrer" className="text-indigo-600 underline">
                                         Find your Chat ID via @userinfobot
                                     </a>
@@ -371,13 +590,12 @@ export default function SettingsPage() {
                                             <p className="text-sm text-gray-600 mt-1">{business.fb_page_name}</p>
                                             <p className="text-xs text-gray-500 mt-1">Page ID: {business.fb_page_id}</p>
                                         </div>
-                                        <button
-                                            onClick={handleDisconnectFacebook}
+                                        <ConfirmButton
+                                            label="Disconnect"
+                                            confirmLabel="Yes, Disconnect"
+                                            onConfirm={handleDisconnectFacebook}
                                             disabled={saving}
-                                            className="px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
-                                        >
-                                            {saving ? <Loader2 className="animate-spin" size={16} /> : 'Disconnect'}
-                                        </button>
+                                        />
                                     </div>
                                 </div>
                             ) : (
@@ -386,6 +604,7 @@ export default function SettingsPage() {
                                 </div>
                             )}
                         </div>
+
                         {/* Google Calendar Integration */}
                         <div className="p-4 border border-gray-200 rounded-xl">
                             <div className="flex items-center justify-between mb-4">
@@ -421,13 +640,12 @@ export default function SettingsPage() {
                                             )}
                                             <p className="text-xs text-gray-400 mt-1">Customers can book appointments via chat</p>
                                         </div>
-                                        <button
-                                            onClick={handleDisconnectGoogleCalendar}
+                                        <ConfirmButton
+                                            label="Disconnect"
+                                            confirmLabel="Yes, Disconnect"
+                                            onConfirm={handleDisconnectGoogleCalendar}
                                             disabled={saving}
-                                            className="px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
-                                        >
-                                            {saving ? <Loader2 className="animate-spin" size={16} /> : 'Disconnect'}
-                                        </button>
+                                        />
                                     </div>
                                 </div>
                             ) : (
@@ -451,7 +669,7 @@ export default function SettingsPage() {
                     </div>
                 </div>
 
-                {/* Account Settings Section */}
+                {/* ── Account Settings ── */}
                 <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
                     <div className="flex items-center gap-3 mb-6">
                         <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center">
@@ -475,7 +693,7 @@ export default function SettingsPage() {
                 </div>
             </div>
 
-            {/* Change Password Modal */}
+            {/* ── Change Password Modal ── */}
             {showPasswordModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
                     <div className="bg-white rounded-2xl shadow-xl w-full max-w-md mx-4 p-6">
@@ -496,7 +714,6 @@ export default function SettingsPage() {
                             </div>
                         ) : (
                             <div className="space-y-4">
-                                {/* Current Password */}
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700 mb-1">Current Password</label>
                                     <div className="relative">
@@ -517,7 +734,6 @@ export default function SettingsPage() {
                                     </div>
                                 </div>
 
-                                {/* New Password */}
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700 mb-1">New Password</label>
                                     <div className="relative">
@@ -536,9 +752,34 @@ export default function SettingsPage() {
                                             {showNext ? <EyeOff size={16} /> : <Eye size={16} />}
                                         </button>
                                     </div>
+                                    {/* Password strength indicator */}
+                                    {passwordForm.next.length > 0 && (
+                                        <div className="mt-2">
+                                            <div className="flex gap-1 mb-1">
+                                                {[1, 2, 3, 4].map(level => {
+                                                    const strength = getPasswordStrength(passwordForm.next);
+                                                    return (
+                                                        <div
+                                                            key={level}
+                                                            className={`h-1.5 flex-1 rounded-full transition-colors ${
+                                                                level <= strength
+                                                                    ? strength === 1 ? 'bg-red-500'
+                                                                    : strength === 2 ? 'bg-orange-400'
+                                                                    : strength === 3 ? 'bg-yellow-400'
+                                                                    : 'bg-green-500'
+                                                                    : 'bg-gray-200'
+                                                            }`}
+                                                        />
+                                                    );
+                                                })}
+                                            </div>
+                                            <p className="text-xs text-gray-500">
+                                                {['', 'Weak', 'Fair', 'Good', 'Strong'][getPasswordStrength(passwordForm.next)]}
+                                            </p>
+                                        </div>
+                                    )}
                                 </div>
 
-                                {/* Confirm New Password */}
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700 mb-1">Confirm New Password</label>
                                     <input
@@ -577,6 +818,16 @@ export default function SettingsPage() {
             )}
         </div>
     );
+}
+
+/** Returns a 1-4 strength score for a password */
+function getPasswordStrength(pwd: string): number {
+    let score = 0;
+    if (pwd.length >= 8) score++;
+    if (pwd.length >= 12) score++;
+    if (/[A-Z]/.test(pwd) && /[a-z]/.test(pwd)) score++;
+    if (/[0-9]/.test(pwd) || /[^A-Za-z0-9]/.test(pwd)) score++;
+    return Math.max(1, Math.min(4, score));
 }
 
 import FacebookConnectButton from '@/components/dashboard/FacebookConnectButton';

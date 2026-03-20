@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
         // Get business info for this user
         const { data: business, error } = await (supabase
             .from('businesses') as any)
-            .select('id, name, telegram_bot_token, fb_page_id, fb_page_name, owner_telegram_chat_id, google_calendar_token, google_calendar_email')
+            .select('id, name, telegram_bot_token, fb_page_id, fb_page_name, owner_telegram_chat_id, google_calendar_token, google_calendar_email, timezone, business_hours')
             .eq('id', session.businessId)
             .single();
 
@@ -40,6 +40,8 @@ export async function GET(request: NextRequest) {
                 owner_telegram_chat_id: business.owner_telegram_chat_id,
                 has_google_calendar: !!business.google_calendar_token,
                 google_calendar_email: business.google_calendar_email || null,
+                timezone: business.timezone || 'Asia/Colombo',
+                business_hours: business.business_hours || null,
             },
         });
 
@@ -63,7 +65,7 @@ export async function PATCH(request: NextRequest) {
         }
 
         const body = await request.json();
-        const allowed = ['owner_telegram_chat_id', 'name', 'phone'] as const;
+        const allowed = ['owner_telegram_chat_id', 'name', 'phone', 'timezone', 'business_hours'] as const;
 
         // Only pick allowed fields from the request body
         const updates: Record<string, unknown> = {};
