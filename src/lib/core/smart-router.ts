@@ -43,8 +43,10 @@ const INTENT_RULES: IntentPattern[] = [
   {
     intent: 'complaint',
     patterns: [
-      /\b(issue|problem|wrong|broken|cancel|refund|not working|bad|terrible)\b/i,
-      /\b(complaint|complain|disappointed|unhappy)\b/i,
+      // NOTE: 'cancel' intentionally excluded — handled by cancellation intent at higher priority
+      /\b(issue|problem|wrong|broken|refund|not working|bad|terrible|awful|horrible)\b/i,
+      /\b(complaint|complain|disappointed|unhappy|frustrated|angry|upset)\b/i,
+      /\b(never again|worst|useless|scam|rude|poor service)\b/i,
     ],
     priority: 7,
   },

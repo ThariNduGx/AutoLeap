@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { Search, MessageSquare, Bot, User, RefreshCw, AlertTriangle, CheckCircle, ShieldAlert } from 'lucide-react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { Search, MessageSquare, Bot, User, RefreshCw, AlertTriangle, CheckCircle, ShieldAlert, Send, Loader2 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 
 interface Conversation {
@@ -34,6 +34,12 @@ export default function ConversationsPage() {
     const [takingOver, setTakingOver] = useState<string | null>(null);
     const [error, setError] = useState('');
 
+    // Human reply state
+    const [replyText, setReplyText] = useState('');
+    const [sending, setSending] = useState(false);
+    const [replyError, setReplyError] = useState('');
+    const msgEndRef = useRef<HTMLDivElement>(null);
+
     const fetchConversations = useCallback(async () => {
         try {
             const params = new URLSearchParams();
@@ -62,6 +68,29 @@ export default function ConversationsPage() {
         const timer = setInterval(fetchConversations, 10_000);
         return () => clearInterval(timer);
     }, [fetchConversations]);
+
+    async function sendReply() {
+        if (!selected || !replyText.trim() || sending) return;
+        setSending(true);
+        setReplyError('');
+        try {
+            const res = await fetch(`/api/conversations/${selected.id}/reply`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message: replyText.trim() }),
+            });
+            if (res.ok) {
+                setReplyText('');
+                await fetchConversations();
+                setTimeout(() => msgEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+            } else {
+                const data = await res.json();
+                setReplyError(data.error || 'Failed to send');
+            }
+        } finally {
+            setSending(false);
+        }
+    }
 
     async function toggleTakeover(conv: Conversation) {
         const newStatus = conv.status === 'human' ? 'ai' : 'human';
@@ -250,37 +279,74 @@ export default function ConversationsPage() {
                                 <p className="text-center text-gray-400 text-sm py-8">No message history</p>
                             ) : (
                                 selected.history
-                                    .filter((h: any) => h.role === 'user' || h.role === 'model')
+                                    .filter((h: any) => h.role === 'user' || h.role === 'model' || h.role === 'owner')
                                     .map((h: any, i: number) => {
                                         const isUser = h.role === 'user';
+                                        const isOwner = h.role === 'owner';
                                         const text = h.parts?.find((p: any) => p.text)?.text || '';
                                         if (!text) return null;
                                         return (
-                                            <div key={i} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+                                            <div key={i} className={`flex ${isUser || isOwner ? 'justify-end' : 'justify-start'}`}>
                                                 <div className={`max-w-[80%] px-3 py-2 rounded-xl text-sm leading-relaxed ${
                                                     isUser
                                                         ? 'bg-indigo-600 text-white rounded-tr-none'
+                                                        : isOwner
+                                                        ? 'bg-orange-500 text-white rounded-tr-none'
                                                         : 'bg-white text-gray-800 border border-gray-200 rounded-tl-none shadow-sm'
                                                 }`}>
+                                                    {isOwner && (
+                                                        <p className="text-xs opacity-70 mb-0.5 font-medium">You (owner)</p>
+                                                    )}
                                                     {text}
                                                 </div>
                                             </div>
                                         );
                                     })
                             )}
+                            <div ref={msgEndRef} />
                         </div>
 
-                        {/* Status banners */}
+                        {/* Status banners + Reply box */}
                         {selected.status === 'escalated' && (
-                            <div className="p-3 bg-red-50 border-t border-red-200 text-xs text-red-700 flex items-center gap-2">
+                            <div className="px-3 pt-2 bg-red-50 border-t border-red-200 text-xs text-red-700 flex items-center gap-2">
                                 <ShieldAlert size={12} />
-                                Escalated — customer flagged a complaint. AI is paused. Click &quot;Return to AI&quot; to resume automation.
+                                Escalated — customer flagged a complaint. AI is paused.
                             </div>
                         )}
-                        {selected.status === 'human' && (
-                            <div className="p-3 bg-orange-50 border-t border-orange-100 text-xs text-orange-700 flex items-center gap-2">
-                                <User size={12} />
-                                Human mode active — AI responses are paused for this conversation
+
+                        {/* Human-mode reply box */}
+                        {(selected.status === 'human' || selected.status === 'escalated') && (
+                            <div className="p-3 border-t border-gray-100 bg-white">
+                                {replyError && (
+                                    <p className="text-xs text-red-600 mb-2">{replyError}</p>
+                                )}
+                                <div className="flex gap-2">
+                                    <textarea
+                                        value={replyText}
+                                        onChange={e => setReplyText(e.target.value)}
+                                        onKeyDown={e => {
+                                            if (e.key === 'Enter' && !e.shiftKey) {
+                                                e.preventDefault();
+                                                sendReply();
+                                            }
+                                        }}
+                                        placeholder="Type a reply... (Enter to send, Shift+Enter for new line)"
+                                        rows={2}
+                                        maxLength={4000}
+                                        className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg resize-none outline-none focus:ring-2 focus:ring-orange-500"
+                                    />
+                                    <button
+                                        onClick={sendReply}
+                                        disabled={sending || !replyText.trim()}
+                                        className="px-3 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-lg flex items-center gap-1.5 text-sm font-medium disabled:opacity-50 transition-colors self-end"
+                                    >
+                                        {sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                                        Send
+                                    </button>
+                                </div>
+                                <p className="text-xs text-gray-400 mt-1">
+                                    AI is paused. Click &quot;Return to AI&quot; to hand back to automation.
+                                </p>
                             </div>
                         )}
                     </>
