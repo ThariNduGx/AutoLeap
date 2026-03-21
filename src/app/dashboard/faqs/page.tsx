@@ -1,20 +1,25 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { Plus, Trash2, Tag, Loader2, Upload, FileText, CheckCircle2, AlertCircle, TrendingUp, Sparkles } from 'lucide-react';
+import { Plus, Trash2, Tag, Loader2, Upload, FileText, CheckCircle2, AlertCircle, TrendingUp, Sparkles, Pencil } from 'lucide-react';
 
 export default function FAQsPage() {
     const [faqs, setFaqs] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
+    const [fetchError, setFetchError] = useState('');
 
     // C3: FAQ suggestions
     const [suggestions, setSuggestions]     = useState<{ question: string; answer: string }[]>([]);
     const [loadingSuggestions, setLoadingSuggestions] = useState(false);
     const [suggestError, setSuggestError]   = useState('');
     const [addingIdx, setAddingIdx]         = useState<number | null>(null);
+
+    // Add / Edit modal (shared)
     const [isModalOpen, setIsModalOpen] = useState(false);
-    const [newFaq, setNewFaq] = useState({ question: '', answer: '', category: 'general' });
+    const [editingFaq, setEditingFaq] = useState<any | null>(null); // null = adding, object = editing
+    const [modalFaq, setModalFaq] = useState({ question: '', answer: '', category: 'general' });
     const [saving, setSaving] = useState(false);
+
     const [deletingId, setDeletingId] = useState<string | null>(null);
     const [uploadState, setUploadState] = useState<
         'idle' | 'uploading' | 'success' | 'error'
@@ -26,35 +31,57 @@ export default function FAQsPage() {
         fetchFaqs();
     }, []);
 
+    // BUG 19 FIX: Show error state when fetch fails instead of silent empty list
     async function fetchFaqs() {
         try {
             const res = await fetch('/api/faqs');
             const data = await res.json();
-            if (Array.isArray(data)) setFaqs(data);
+            if (!res.ok || !Array.isArray(data)) {
+                setFetchError(data.error || 'Failed to load FAQs. Please refresh.');
+            } else {
+                setFetchError('');
+                setFaqs(data);
+            }
         } catch (err) {
-            console.error('Failed to fetch FAQs', err);
+            setFetchError('Network error. Please refresh the page.');
         } finally {
             setLoading(false);
         }
     }
 
-    async function handleAddFaq() {
+    function openAddModal() {
+        setEditingFaq(null);
+        setModalFaq({ question: '', answer: '', category: 'general' });
+        setIsModalOpen(true);
+    }
+
+    function openEditModal(faq: any) {
+        setEditingFaq(faq);
+        setModalFaq({ question: faq.question, answer: faq.answer, category: faq.category || 'general' });
+        setIsModalOpen(true);
+    }
+
+    // BUG 18 FIX: Shared save handler for both add and edit
+    async function handleSaveFaq() {
         setSaving(true);
         try {
+            const isEdit = editingFaq !== null;
             const res = await fetch('/api/faqs', {
-                method: 'POST',
+                method: isEdit ? 'PUT' : 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(newFaq),
+                body: JSON.stringify(isEdit ? { id: editingFaq.id, ...modalFaq } : modalFaq),
             });
             if (res.ok) {
                 setIsModalOpen(false);
-                setNewFaq({ question: '', answer: '', category: 'general' });
-                fetchFaqs(); // Refresh list
+                setModalFaq({ question: '', answer: '', category: 'general' });
+                setEditingFaq(null);
+                fetchFaqs();
             } else {
-                alert('Failed to save FAQ');
+                const data = await res.json();
+                alert(data.error || `Failed to ${isEdit ? 'update' : 'save'} FAQ`);
             }
-        } catch (err) {
-            alert('Error saving FAQ');
+        } catch {
+            alert('Network error. Please try again.');
         } finally {
             setSaving(false);
         }
@@ -88,12 +115,17 @@ export default function FAQsPage() {
         }
     }
 
+    // BUG 17 FIX: Check res.ok before removing from UI; rollback on failure
     async function handleDelete(id: string) {
         try {
-            await fetch(`/api/faqs?id=${id}`, { method: 'DELETE' });
-            setFaqs(faqs.filter(f => f.id !== id));
-        } catch (err) {
-            alert('Failed to delete');
+            const res = await fetch(`/api/faqs?id=${id}`, { method: 'DELETE' });
+            if (res.ok) {
+                setFaqs(prev => prev.filter(f => f.id !== id));
+            } else {
+                alert('Failed to delete. Please try again.');
+            }
+        } catch {
+            alert('Network error. Please try again.');
         } finally {
             setDeletingId(null);
         }
@@ -146,7 +178,7 @@ export default function FAQsPage() {
                     </button>
 
                     <button
-                        onClick={() => setIsModalOpen(true)}
+                        onClick={openAddModal}
                         className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-medium transition-colors"
                     >
                         <Plus size={20} />
@@ -197,10 +229,11 @@ export default function FAQsPage() {
                                                     headers: { 'Content-Type': 'application/json' },
                                                     body: JSON.stringify({ question: s.question, answer: s.answer, category: 'suggested' }),
                                                 });
+                                                // BUG 16 FIX: POST returns { success: true }, not the FAQ object.
+                                                // Refresh the list to get the real FAQ with its server-assigned ID.
                                                 if (res.ok) {
-                                                    const added = await res.json();
-                                                    setFaqs(f => [added, ...f]);
                                                     setSuggestions(p => p.filter((_, j) => j !== i));
+                                                    fetchFaqs();
                                                 }
                                             } finally { setAddingIdx(null); }
                                         }}
@@ -221,6 +254,12 @@ export default function FAQsPage() {
 
             {loading ? (
                 <div className="text-center py-12 text-gray-500">Loading FAQs...</div>
+            ) : fetchError ? (
+                // BUG 19 FIX: Show error state instead of silent empty list
+                <div className="text-center py-12">
+                    <AlertCircle size={32} className="mx-auto mb-3 text-red-400" />
+                    <p className="text-red-600 font-medium">{fetchError}</p>
+                </div>
             ) : (
                 <div className="grid grid-cols-1 gap-4">
                     {faqs.length === 0 && (
@@ -238,6 +277,16 @@ export default function FAQsPage() {
                             <div className="flex items-start justify-between">
                                 <h3 className="text-lg font-semibold text-gray-900 mb-2">{faq.question}</h3>
                                 <div className="flex items-center gap-2">
+                                    {/* BUG 18 FIX: Edit button */}
+                                    {deletingId !== faq.id && (
+                                        <button
+                                            onClick={() => openEditModal(faq)}
+                                            className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                                            title="Edit FAQ"
+                                        >
+                                            <Pencil size={16} />
+                                        </button>
+                                    )}
                                     {deletingId === faq.id ? (
                                         <>
                                             <button
@@ -281,16 +330,19 @@ export default function FAQsPage() {
                 </div>
             )}
 
+            {/* Add / Edit modal (BUG 18 FIX: shared for both operations) */}
             {isModalOpen && (
                 <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
                     <div className="bg-white rounded-2xl w-full max-w-lg p-6">
-                        <h2 className="text-xl font-bold mb-4">Add New FAQ</h2>
+                        <h2 className="text-xl font-bold mb-4">
+                            {editingFaq ? 'Edit FAQ' : 'Add New FAQ'}
+                        </h2>
                         <div className="space-y-4">
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Question</label>
                                 <input
-                                    value={newFaq.question}
-                                    onChange={e => setNewFaq({ ...newFaq, question: e.target.value })}
+                                    value={modalFaq.question}
+                                    onChange={e => setModalFaq({ ...modalFaq, question: e.target.value })}
                                     type="text"
                                     className="w-full border border-gray-300 rounded-lg px-4 py-2 outline-none focus:ring-2 focus:ring-indigo-500"
                                     placeholder="e.g. What is your location?"
@@ -299,8 +351,8 @@ export default function FAQsPage() {
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Answer</label>
                                 <textarea
-                                    value={newFaq.answer}
-                                    onChange={e => setNewFaq({ ...newFaq, answer: e.target.value })}
+                                    value={modalFaq.answer}
+                                    onChange={e => setModalFaq({ ...modalFaq, answer: e.target.value })}
                                     className="w-full border border-gray-300 rounded-lg px-4 py-2 h-32 resize-none outline-none focus:ring-2 focus:ring-indigo-500"
                                     placeholder="Type the answer here..."
                                 />
@@ -308,21 +360,26 @@ export default function FAQsPage() {
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
                                 <input
-                                    value={newFaq.category}
-                                    onChange={e => setNewFaq({ ...newFaq, category: e.target.value })}
+                                    value={modalFaq.category}
+                                    onChange={e => setModalFaq({ ...modalFaq, category: e.target.value })}
                                     className="w-full border border-gray-300 rounded-lg px-4 py-2 outline-none focus:ring-2 focus:ring-indigo-500"
                                     placeholder="e.g. pricing, location"
                                 />
                             </div>
                             <div className="flex justify-end gap-3 mt-6">
-                                <button onClick={() => setIsModalOpen(false)} className="px-4 py-2 text-gray-600 font-medium hover:bg-gray-100 rounded-lg">Cancel</button>
                                 <button
-                                    onClick={handleAddFaq}
+                                    onClick={() => { setIsModalOpen(false); setEditingFaq(null); }}
+                                    className="px-4 py-2 text-gray-600 font-medium hover:bg-gray-100 rounded-lg"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={handleSaveFaq}
                                     disabled={saving}
                                     className="px-4 py-2 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-2"
                                 >
                                     {saving && <Loader2 size={16} className="animate-spin" />}
-                                    {saving ? 'Saving...' : 'Save FAQ'}
+                                    {saving ? 'Saving...' : editingFaq ? 'Update FAQ' : 'Save FAQ'}
                                 </button>
                             </div>
                         </div>
