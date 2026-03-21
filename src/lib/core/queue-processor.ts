@@ -742,7 +742,12 @@ async function handleBooking(
 
     // Handle slot selection from inline keyboard callback
     if (message.text.startsWith('slot:')) {
-      const [, date, time] = message.text.split(':');
+      // Format: "slot:YYYY-MM-DD:HH:MM" — time itself contains a colon so we
+      // cannot use a simple destructure; extract date and time explicitly.
+      const withoutPrefix = message.text.slice('slot:'.length); // "YYYY-MM-DD:HH:MM"
+      const dateEnd = withoutPrefix.indexOf(':');
+      const date = withoutPrefix.slice(0, dateEnd);             // "YYYY-MM-DD"
+      const time = withoutPrefix.slice(dateEnd + 1);            // "HH:MM"
       currentMessage = `Customer selected the time slot: ${date} at ${time}. ` +
         `Now ask for their full name and phone number to confirm the booking. ` +
         `State so far: ${JSON.stringify(conversation.state)}`;

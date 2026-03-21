@@ -42,10 +42,6 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   reactCompiler: true,
-  // Enable startup instrumentation (env validation, observability init)
-  experimental: {
-    instrumentationHook: true,
-  },
   async headers() {
     return [
       {

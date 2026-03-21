@@ -60,10 +60,10 @@ export async function GET(req: Request) {
         const [apptH, apptM] = appt.appointment_time.split(':').map(Number);
 
         // Parse appointment local datetime
+        // appointment_date is "YYYY-MM-DD"; setFullYear month is 0-based so subtract 1.
         const apptLocal = new Date(nowLocal);
-        apptLocal.setFullYear(
-          ...appt.appointment_date.split('-').map(Number) as [number, number, number]
-        );
+        const [apptYear, apptMonthRaw, apptDay] = appt.appointment_date.split('-').map(Number);
+        apptLocal.setFullYear(apptYear, apptMonthRaw - 1, apptDay);
         apptLocal.setHours(apptH, apptM, 0, 0);
 
         const minutesUntil = (apptLocal.getTime() - nowLocal.getTime()) / 60_000;
@@ -115,7 +115,9 @@ export async function GET(req: Request) {
 
         const [h, m] = appt.appointment_time.split(':').map(Number);
         const apptEnd = new Date(nowLocal);
-        apptEnd.setFullYear(...appt.appointment_date.split('-').map(Number) as [number, number, number]);
+        // appointment_date is "YYYY-MM-DD"; setFullYear month is 0-based so subtract 1.
+        const [endYear, endMonthRaw, endDay] = appt.appointment_date.split('-').map(Number);
+        apptEnd.setFullYear(endYear, endMonthRaw - 1, endDay);
         apptEnd.setHours(h, m + (appt.duration_minutes || 60), 0, 0);
 
         const minutesSinceEnd = (nowLocal.getTime() - apptEnd.getTime()) / 60_000;

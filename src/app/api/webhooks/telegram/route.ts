@@ -172,9 +172,11 @@ export async function POST(req: Request) {
       }
 
       if (data.startsWith('slot:')) {
-        const parts = data.split(':');
-        const date = parts[1];
-        const time = parts[2];
+        // Format: "slot:YYYY-MM-DD:HH:MM" — time contains a colon, so extract carefully.
+        const withoutPrefix = data.slice('slot:'.length); // "YYYY-MM-DD:HH:MM"
+        const dateEnd = withoutPrefix.indexOf(':');
+        const date = withoutPrefix.slice(0, dateEnd);     // "YYYY-MM-DD"
+        const time = withoutPrefix.slice(dateEnd + 1);    // "HH:MM"
 
         // Enqueue as synthetic booking continuation (idempotent via callback update_id)
         const cbIdempotencyKey = body.update_id != null
