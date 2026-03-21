@@ -282,7 +282,7 @@ export default function ConversationsPage() {
                                     <span className={`text-xs px-2 py-0.5 rounded-full border font-medium capitalize ${INTENT_COLORS[conv.intent] || INTENT_COLORS.unknown}`}>
                                         {conv.intent}
                                     </span>
-                                    {conv.status === 'complaint' || conv.status === 'escalated' ? (
+                                    {conv.status === 'escalated' ? (
                                         <AlertTriangle size={12} className="text-red-500" />
                                     ) : null}
                                     {conv.state?.booked ? (

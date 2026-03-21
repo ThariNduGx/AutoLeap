@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Search, User, Phone, Loader2, ChevronRight, X, Calendar, Clock, StickyNote, AlertTriangle } from 'lucide-react';
 
 interface Customer {
@@ -59,8 +59,18 @@ export default function CustomersPage() {
 
     useEffect(() => { fetchCustomers(); }, [fetchCustomers]);
 
+    // Debounced live search — fires 400ms after the user stops typing
+    const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const q = e.target.value;
+        setSearch(q);
+        if (debounceRef.current) clearTimeout(debounceRef.current);
+        debounceRef.current = setTimeout(() => fetchCustomers(q), 400);
+    };
+
     const handleSearch = (e: React.FormEvent) => {
         e.preventDefault();
+        if (debounceRef.current) clearTimeout(debounceRef.current);
         fetchCustomers(search);
     };
 
@@ -114,7 +124,7 @@ export default function CustomersPage() {
                             <input
                                 type="text"
                                 value={search}
-                                onChange={e => setSearch(e.target.value)}
+                                onChange={handleSearchChange}
                                 placeholder="Name or phone…"
                                 className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-500"
                             />

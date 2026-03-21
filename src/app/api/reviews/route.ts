@@ -27,6 +27,9 @@ export async function GET(req: NextRequest) {
  * POST /api/reviews — submit a review (called by bot webhook handler).
  * Does NOT require business auth — it's called on behalf of a customer.
  * Requires: appointment_id OR (business_id + customer_chat_id), rating (1-5), optional comment.
+ *
+ * Security: if appointment_id is supplied, we verify it belongs to the stated business_id
+ * to prevent submitting spoofed reviews for arbitrary businesses.
  */
 export async function POST(req: NextRequest) {
   const body = await req.json();
@@ -37,6 +40,20 @@ export async function POST(req: NextRequest) {
   }
 
   const supabase = getSupabaseClient();
+
+  // If an appointment_id is provided, verify it actually belongs to this business
+  if (appointment_id) {
+    const { data: appt, error: apptErr } = await (supabase.from('appointments') as any)
+      .select('id')
+      .eq('id', appointment_id)
+      .eq('business_id', business_id)
+      .maybeSingle();
+
+    if (apptErr || !appt) {
+      return NextResponse.json({ error: 'Invalid appointment or business' }, { status: 400 });
+    }
+  }
+
   const { data, error } = await (supabase.from('reviews') as any)
     .insert({
       business_id,
