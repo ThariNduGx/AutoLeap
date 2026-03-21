@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
     .select('history')
     .eq('business_id', session.businessId)
     .not('history', 'eq', '[]')
-    .order('updated_at', { ascending: false })
+    .order('last_message_at', { ascending: false })
     .limit(80);
 
   if (!convos?.length) {
