@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { google } from 'googleapis';
 import { getSupabaseClient } from '@/lib/infrastructure/supabase';
+import { redis } from '@/lib/infrastructure/redis';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,7 +14,7 @@ const oauth2Client = new google.auth.OAuth2(
 export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
     const code = searchParams.get('code');
-    const state = searchParams.get('state');
+    const state = searchParams.get('state'); // This is the CSRF nonce, not a raw businessId
     const error = searchParams.get('error');
 
     const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
@@ -27,7 +28,12 @@ export async function GET(request: NextRequest) {
         return NextResponse.redirect(`${calendarUrl}?error=missing_params`);
     }
 
-    const businessId = state;
+    // CSRF check: resolve nonce → businessId and immediately delete the key (one-time use)
+    const businessId = await redis.getdel(`oauth:state:${state}`);
+    if (!businessId || typeof businessId !== 'string') {
+        console.error('[OAUTH] Invalid or expired state nonce');
+        return NextResponse.redirect(`${calendarUrl}?error=invalid_state`);
+    }
 
     try {
         // Exchange code for tokens

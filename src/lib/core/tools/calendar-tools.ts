@@ -135,6 +135,12 @@ export async function executeCalendarTool(
         return { error: 'Invalid date. Use YYYY-MM-DD format with a real calendar date.' };
       }
 
+      // Reject past dates using Asia/Colombo as the reference timezone (en-CA gives YYYY-MM-DD)
+      const todayLK = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Colombo' }).format(new Date());
+      if (date < todayLK) {
+        return { error: 'Cannot check availability for past dates.' };
+      }
+
       // Look up service config for duration, buffer, and min_advance_hours
       const svcConfig = service_name ? await lookupService(businessId, service_name) : null;
 
@@ -216,6 +222,12 @@ export async function executeCalendarTool(
         currency: argCurrency,
       } = args;
 
+      // Reject past dates using Asia/Colombo as the reference timezone
+      const todayLKBook = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Colombo' }).format(new Date());
+      if (date < todayLKBook) {
+        return { error: 'Cannot book an appointment in the past. Please choose a future date.' };
+      }
+
       // Validate phone
       const cleaned = customer_phone.replace(/[\s\-\(\)\.]/g, '');
       if (!/^\+?\d{7,15}$/.test(cleaned)) {
@@ -233,8 +245,8 @@ export async function executeCalendarTool(
         }
       }
 
-      // Atomically lock the slot
-      const lockAcquired = await lockSlot(businessId, date, time, 300);
+      // Atomically lock the slot for 120 seconds to prevent double-booking
+      const lockAcquired = await lockSlot(businessId, date, time, 120);
       if (!lockAcquired) {
         return { error: 'This slot was just booked by another customer. Please choose a different time.' };
       }
@@ -324,8 +336,8 @@ export async function executeCalendarTool(
         return { error: 'Invalid date format. Use YYYY-MM-DD' };
       }
 
-      // Lock the new slot first
-      const lockAcquired = await lockSlot(businessId, new_date, new_time, 300);
+      // Lock the new slot for 120 seconds to prevent double-booking
+      const lockAcquired = await lockSlot(businessId, new_date, new_time, 120);
       if (!lockAcquired) {
         return { error: 'That slot is no longer available. Please choose a different time.' };
       }
