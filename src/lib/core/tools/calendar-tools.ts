@@ -161,7 +161,32 @@ export async function executeCalendarTool(
         };
       }
 
-      const slots = await getAvailableSlots(businessId, date, undefined, {
+      // ── Business hours check ─────────────────────────────────────────────
+      const { data: bizHours } = await (supabase
+        .from('businesses') as any)
+        .select('business_hours')
+        .eq('id', businessId)
+        .single();
+
+      const DAYS_OF_WEEK = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+      const dayName = DAYS_OF_WEEK[dateObj.getUTCDay()];
+      const dayConfig = bizHours?.business_hours?.[dayName];
+
+      if (dayConfig && dayConfig.enabled === false) {
+        return {
+          date,
+          available_slots: [],
+          count: 0,
+          closed: true,
+          reason: 'Closed',
+        };
+      }
+
+      const businessHours = dayConfig?.enabled
+        ? { start: dayConfig.open, end: dayConfig.close }
+        : undefined;
+
+      const slots = await getAvailableSlots(businessId, date, businessHours, {
         durationMinutes:   svcConfig?.duration_minutes,
         bufferMinutes:     svcConfig?.buffer_minutes,
         minAdvanceHours:   svcConfig?.min_advance_hours,
@@ -245,7 +270,7 @@ export async function executeCalendarTool(
           currency:          finalCurrency,
         });
 
-        // Upsert customer profile
+        // Upsert customer profile and increment total_bookings
         try {
           await (supabase.from('customers') as any)
             .upsert({
@@ -255,8 +280,19 @@ export async function executeCalendarTool(
               platform:    args._platform || null,
               chat_id:     customer_chat_id || null,
               updated_at:  new Date().toISOString(),
-            }, { onConflict: 'business_id,phone', ignoreDuplicates: false })
-          // Increment total_bookings via rpc would be ideal; for now just upsert the profile
+            }, { onConflict: 'business_id,phone', ignoreDuplicates: false });
+
+          // Increment total_bookings counter (same pattern as noshow_count in bookings API)
+          const { data: cust } = await (supabase.from('customers') as any)
+            .select('id, total_bookings')
+            .eq('business_id', businessId)
+            .eq('phone', customer_phone)
+            .maybeSingle();
+          if (cust) {
+            await (supabase.from('customers') as any)
+              .update({ total_bookings: (cust.total_bookings ?? 0) + 1 })
+              .eq('id', cust.id);
+          }
         } catch (custErr) {
           console.warn('[TOOL] Customer profile upsert failed (non-fatal):', custErr);
         }

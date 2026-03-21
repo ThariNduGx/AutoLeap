@@ -546,16 +546,47 @@ async function handleGreeting(
   businessId: string
 ): Promise<ProcessingResult> {
   const supabase = getSupabaseClient();
-  const { data: business } = await (supabase.from('businesses') as any)
-    .select('name')
-    .eq('id', businessId)
-    .single();
 
-  const name = business?.name || 'our service';
+  // Fetch business settings and check if returning customer — in parallel
+  const [{ data: business }, { data: customer }] = await Promise.all([
+    (supabase.from('businesses') as any)
+      .select('name, bot_name, bot_greeting, bot_tone')
+      .eq('id', businessId)
+      .single(),
+    (supabase.from('customers') as any)
+      .select('name, total_bookings')
+      .eq('business_id', businessId)
+      .eq('chat_id', message.chatId)
+      .maybeSingle(),
+  ]);
+
+  const bizName  = business?.name     || 'our service';
+  const botName  = business?.bot_name || 'Assistant';
+  const botTone  = business?.bot_tone || 'friendly';
+  const botGreet = business?.bot_greeting || '';
+
+  const toneNote =
+    botTone === 'professional' ? 'Be professional and formal.' :
+    botTone === 'casual'       ? 'Be casual and relaxed.' :
+    'Be warm and friendly.';
+
+  // Build personalised opening line
+  let openLine: string;
+  if (customer && (customer.total_bookings ?? 0) > 0) {
+    openLine = `Welcome back, *${customer.name}*! 👋`;
+  } else if (botGreet) {
+    openLine = botGreet.replace('{bot_name}', botName);
+  } else {
+    openLine = `Hello! Welcome to *${bizName}*.`;
+  }
+
+  // Tone-aware help text (unused in the static response but keeps the variable used)
+  void toneNote;
+
   return {
     success: true,
     // §8.3 ethics requirement: disclose AI on first message
-    response: `Hello! Welcome to *${name}*.\n\n_You are chatting with AutoLeap AI — an automated assistant. A human is available if needed._\n\nHow can I help you today?\n\n• Book an appointment\n• Answer questions about our services\n• Check your booking status`,
+    response: `${openLine}\n\n_You are chatting with ${botName} — an AI assistant. A human is available if needed._\n\nHow can I help you today?\n\n• Book an appointment\n• Answer questions about our services\n• Check your booking status`,
     costIncurred: 0,
   };
 }
@@ -569,15 +600,25 @@ async function handleFAQ(
   const { llm } = await import('../infrastructure/llm-adapter');
 
   try {
-    // Fetch active services + tiers in parallel with FAQ search
-    const [relevantFAQs, { data: svcRows }] = await Promise.all([
+    // Fetch active services + tiers + bot settings in parallel with FAQ search
+    const [relevantFAQs, { data: svcRows }, { data: bizRow }] = await Promise.all([
       searchFAQs(businessId, message.text, 0.6, 3),
       (getSupabaseClient().from('services') as any)
         .select('name, description, duration_minutes, price, currency, tiers')
         .eq('business_id', businessId)
         .eq('is_active', true)
         .order('sort_order', { ascending: true }),
+      (getSupabaseClient().from('businesses') as any)
+        .select('bot_name, bot_tone')
+        .eq('id', businessId)
+        .single(),
     ]);
+    const botName = bizRow?.bot_name || 'Assistant';
+    const botTone = bizRow?.bot_tone || 'friendly';
+    const toneInstruction =
+      botTone === 'professional' ? 'Be professional and formal.' :
+      botTone === 'casual'       ? 'Be casual and relaxed.' :
+      'Be warm, friendly and concise.';
 
     // Build a services pricing block (injected into the FAQ context so the AI
     // can answer pricing questions even if there's no dedicated FAQ for them)
@@ -610,7 +651,9 @@ async function handleFAQ(
       ? '\n\nFAQs:\n' + relevantFAQs.map((faq, i) => `[${i + 1}] Q: ${faq.question}\nA: ${faq.answer}`).join('\n\n')
       : '';
 
-    const prompt = `You are a helpful assistant for a service business. Answer the customer's question using the provided FAQs and/or services pricing information below.
+    const prompt = `You are ${botName}, a helpful assistant for a service business. ${toneInstruction}
+ALWAYS respond in the same language the customer writes in (Sinhala, Tamil, English, or any other language).
+Answer the customer's question using the provided FAQs and/or services pricing information below.
 ${faqContext}${servicesPricingBlock}
 
 Customer Question: ${message.text}
@@ -619,8 +662,7 @@ Instructions:
 - If the customer asks about prices, list ALL relevant packages with their prices clearly.
 - Answer briefly and naturally.
 - If you cannot find the answer, say you don't have that information.
-- Keep response under 150 words.
-- Be friendly and professional.`;
+- Keep response under 150 words.`;
 
     const response = await llm.chat.completions.create({
       model: model as any,
@@ -829,9 +871,10 @@ Continue helping them complete the booking. State: ${JSON.stringify(conversation
 
           const toolArgs = { ...call.args } as any;
 
-          // Inject customer_chat_id so appointments can be looked up by chat later
+          // Inject customer_chat_id and platform so customer profiles are saved correctly
           if (call.name === 'book_appointment') {
             toolArgs.customer_chat_id = message.chatId;
+            toolArgs._platform = platform;
           }
 
           const toolResult = await executeCalendarTool(call.name, toolArgs, businessId);
@@ -1337,9 +1380,15 @@ async function handleReschedule(
 
   const tz = bizTzR?.timezone ?? 'Asia/Colombo';
   const botName = bizTzR?.bot_name || 'Assistant';
+  const botToneR = bizTzR?.bot_tone || 'friendly';
+  const toneInstructionR =
+    botToneR === 'professional' ? 'Be professional and formal.' :
+    botToneR === 'casual'       ? 'Be casual and relaxed.' :
+    'Be warm, friendly and concise.';
 
   const reschedulePrompt =
-    `You are ${botName}, a friendly booking assistant.
+    `You are ${botName}, a booking assistant. ${toneInstructionR}
+ALWAYS respond in the same language the customer writes in (Sinhala, Tamil, English, or any other language).
 
 The customer wants to reschedule their existing appointment:
 - Service: ${appointment.service_type}

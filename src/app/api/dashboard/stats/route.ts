@@ -39,6 +39,7 @@ export async function GET(request: NextRequest) {
             messageCountRes,
             todayApptsRes,
             bookingAttemptsRes,
+            announcementRes,
         ] = await Promise.all([
             (supabase.from('businesses') as any)
                 .select('name, telegram_bot_token, fb_page_id')
@@ -66,6 +67,12 @@ export async function GET(request: NextRequest) {
                 .select('success')
                 .eq('business_id', businessId)
                 .gte('created_at', thirtyDaysAgo),
+
+            // Global announcement from admin platform settings
+            (supabase.from('platform_settings') as any)
+                .select('value')
+                .eq('key', 'global_announcement')
+                .maybeSingle(),
         ]);
 
         const business = businessRes.data;
@@ -87,6 +94,7 @@ export async function GET(request: NextRequest) {
             todayAppointments: todayApptsRes.count || 0,
             bookingCompletionRate,     // percentage 0-100, or null if no data
             bookingAttempts: totalAttempts,
+            globalAnnouncement: announcementRes.data?.value || '',
         });
 
     } catch (error: any) {
