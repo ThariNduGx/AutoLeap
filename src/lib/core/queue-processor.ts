@@ -139,10 +139,13 @@ async function processItem(item: QueueItem): Promise<void> {
   // Inline keyboard slot selections are always booking continuations
   const isSlotCallback = message.text.startsWith('slot:');
 
-  // Skip AI if this conversation has been handed to a human
+  // Skip AI if this conversation has been handed to a human OR escalated.
+  // Both statuses pause AI: the reply route (reply/route.ts:56), the UI reply box
+  // (page.tsx:456), and the "AI is paused" banner (page.tsx:384) all treat them
+  // identically — the queue processor must match that contract.
   const activeConv = await getActiveConversation(item.business_id, message.chatId);
-  if (activeConv && (activeConv as any).status === 'human') {
-    console.log('[QUEUE] Conversation is in human mode — skipping AI');
+  if (activeConv && (activeConv.status === 'human' || activeConv.status === 'escalated')) {
+    console.log('[QUEUE] Conversation is in human/escalated mode — skipping AI');
     await markCompleted(item.id, 'human_mode');
     return;
   }

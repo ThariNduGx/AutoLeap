@@ -84,7 +84,9 @@ export async function POST(
         body: JSON.stringify({
           chat_id: chatId,
           text: message,
-          parse_mode: 'Markdown',
+          // No parse_mode: owner messages are plain conversational text.
+          // Applying 'Markdown' causes Telegram to reject any message with
+          // an unbalanced *, _, `, or [ — silently dropping the reply.
         }),
       }
     );
