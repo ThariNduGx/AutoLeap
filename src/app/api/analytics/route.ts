@@ -37,6 +37,13 @@ export async function GET(req: NextRequest) {
 
     const supabase = getSupabaseClient();
 
+    // Safety caps: all three high-volume tables are scoped to one business + time
+    // window, but a busy business could still produce tens-of-thousands of rows.
+    // Pulling unlimited rows into Node.js memory for in-memory aggregation would
+    // cause serverless memory spikes. 10 000 rows per table is sufficient to
+    // produce accurate aggregations for any realistic business over 90 days.
+    const ROW_CAP = 10_000;
+
     const [
         attemptsRes,
         conversationsRes,
@@ -49,20 +56,23 @@ export async function GET(req: NextRequest) {
             .select('success, failure_reason, turns_taken, created_at, platform')
             .eq('business_id', businessId)
             .gte('created_at', since)
-            .order('created_at', { ascending: true }),
+            .order('created_at', { ascending: true })
+            .limit(ROW_CAP),
 
         // Conversations for intent breakdown
         (supabase.from('conversations') as any)
             .select('intent, status, created_at')
             .eq('business_id', businessId)
-            .gte('created_at', since),
+            .gte('created_at', since)
+            .limit(ROW_CAP),
 
         // Appointments for peak hours, daily trend, and revenue
         (supabase.from('appointments') as any)
             .select('appointment_date, appointment_time, status, platform, service_type, price, currency, created_at')
             .eq('business_id', businessId)
             .gte('created_at', since)
-            .order('appointment_date', { ascending: true }),
+            .order('appointment_date', { ascending: true })
+            .limit(ROW_CAP),
 
         // Top FAQs by hit count
         (supabase.from('faq_documents') as any)

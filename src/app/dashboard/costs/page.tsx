@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
     LineChart, Line
@@ -12,7 +12,8 @@ function DashboardContent() {
     const [loading, setLoading] = useState(true);
     const [fetchError, setFetchError] = useState(false);
 
-    function loadData() {
+    // Stable reference so the effect dep array stays correct without suppression.
+    const loadData = useCallback(() => {
         setLoading(true);
         setFetchError(false);
         fetch('/api/costs?days=30')
@@ -26,9 +27,9 @@ function DashboardContent() {
                 setFetchError(true);
             })
             .finally(() => setLoading(false));
-    }
+    }, []); // no stateful deps — setters are stable
 
-    useEffect(() => { loadData(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    useEffect(() => { loadData(); }, [loadData]);
 
     if (loading) {
         return (
@@ -130,38 +131,46 @@ function DashboardContent() {
                     {/* Daily Cost Chart */}
                     <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
                         <h3 className="text-lg font-semibold text-gray-900 mb-6">Daily Cost Trend</h3>
-                        <div className="h-64">
-                            <ResponsiveContainer width="100%" height="100%">
-                                <BarChart data={daily}>
-                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                                    <XAxis dataKey="date" tick={{ fontSize: 12, fill: '#64748b' }} axisLine={false} tickLine={false} />
-                                    <YAxis tick={{ fontSize: 12, fill: '#64748b' }} axisLine={false} tickLine={false} tickFormatter={(value) => `$${value}`} />
-                                    <Tooltip
-                                        contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                                        formatter={(value: any) => [`$${Number(value).toFixed(4)}`, 'Cost']}
-                                    />
-                                    <Bar dataKey="total_cost" fill="#6366f1" radius={[4, 4, 0, 0]} barSize={32} />
-                                </BarChart>
-                            </ResponsiveContainer>
-                        </div>
+                        {daily.length === 0 ? (
+                            <div className="h-64 flex items-center justify-center text-gray-400 text-sm">No cost data for this period</div>
+                        ) : (
+                            <div className="h-64">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <BarChart data={daily}>
+                                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                                        <XAxis dataKey="date" tick={{ fontSize: 12, fill: '#64748b' }} axisLine={false} tickLine={false} />
+                                        <YAxis tick={{ fontSize: 12, fill: '#64748b' }} axisLine={false} tickLine={false} tickFormatter={(value) => `$${value}`} />
+                                        <Tooltip
+                                            contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                                            formatter={(value: any) => [`$${Number(value).toFixed(4)}`, 'Cost']}
+                                        />
+                                        <Bar dataKey="total_cost" fill="#6366f1" radius={[4, 4, 0, 0]} barSize={32} />
+                                    </BarChart>
+                                </ResponsiveContainer>
+                            </div>
+                        )}
                     </div>
 
                     {/* Efficiency Chart */}
                     <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
                         <h3 className="text-lg font-semibold text-gray-900 mb-6">Efficiency (Cache Hits vs API)</h3>
-                        <div className="h-64">
-                            <ResponsiveContainer width="100%" height="100%">
-                                <BarChart data={daily}>
-                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                                    <XAxis dataKey="date" tick={{ fontSize: 12, fill: '#64748b' }} axisLine={false} tickLine={false} />
-                                    <YAxis tick={{ fontSize: 12, fill: '#64748b' }} axisLine={false} tickLine={false} />
-                                    <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
-                                    <Legend />
-                                    <Bar dataKey="query_count" name="Total Queries" fill="#e2e8f0" radius={[4, 4, 0, 0]} />
-                                    <Bar dataKey="cache_hits" name="Cache Hits" fill="#f97316" radius={[4, 4, 0, 0]} />
-                                </BarChart>
-                            </ResponsiveContainer>
-                        </div>
+                        {daily.length === 0 ? (
+                            <div className="h-64 flex items-center justify-center text-gray-400 text-sm">No efficiency data for this period</div>
+                        ) : (
+                            <div className="h-64">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <BarChart data={daily}>
+                                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                                        <XAxis dataKey="date" tick={{ fontSize: 12, fill: '#64748b' }} axisLine={false} tickLine={false} />
+                                        <YAxis tick={{ fontSize: 12, fill: '#64748b' }} axisLine={false} tickLine={false} />
+                                        <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
+                                        <Legend />
+                                        <Bar dataKey="query_count" name="Total Queries" fill="#e2e8f0" radius={[4, 4, 0, 0]} />
+                                        <Bar dataKey="cache_hits" name="Cache Hits" fill="#f97316" radius={[4, 4, 0, 0]} />
+                                    </BarChart>
+                                </ResponsiveContainer>
+                            </div>
+                        )}
                     </div>
 
                 </div>
@@ -170,10 +179,7 @@ function DashboardContent() {
     );
 }
 
+// DashboardContent fetches via useEffect — no Suspense boundary needed.
 export default function DashboardPage() {
-    return (
-        <Suspense fallback={<div>Loading...</div>}>
-            <DashboardContent />
-        </Suspense>
-    );
+    return <DashboardContent />;
 }

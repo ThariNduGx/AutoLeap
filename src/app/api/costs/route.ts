@@ -42,6 +42,16 @@ export async function GET(req: NextRequest) {
         const totalQueries = rows.reduce((sum: number, d: any) => sum + (d.query_count || 0), 0);
         const totalHits = rows.reduce((sum: number, d: any) => sum + (d.cache_hits || 0), 0);
 
+        // Compute the actual elapsed days from the earliest data row to today.
+        // Using the requested `days` window as the denominator is wrong when the
+        // business is newer than the window (e.g. 5 days old but days=30), which
+        // would produce a 6x underestimate of projected monthly spend.
+        const actualDays = rows.length > 0
+            ? Math.max(1, Math.ceil(
+                (Date.now() - new Date(rows[0].date + 'T00:00:00Z').getTime()) / 86_400_000
+              ) + 1)
+            : days;
+
         // Fetch the budget for this business
         const { data: budget } = await (supabase
             .from('budgets') as any)
@@ -53,8 +63,8 @@ export async function GET(req: NextRequest) {
             daily: rows,
             summary: {
                 totalCost,
-                avgDailyCost: days > 0 ? totalCost / days : 0,
-                projectedMonthly: days > 0 ? (totalCost / days) * 30 : 0,
+                avgDailyCost: actualDays > 0 ? totalCost / actualDays : 0,
+                projectedMonthly: actualDays > 0 ? (totalCost / actualDays) * 30 : 0,
                 cacheHitRate: totalQueries > 0 ? totalHits / totalQueries : 0,
                 avgCostPerQuery: totalQueries > 0 ? totalCost / totalQueries : 0,
                 monthlyBudget: budget?.monthly_budget_usd ?? null,
