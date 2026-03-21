@@ -55,6 +55,9 @@ export async function POST(req: Request) {
             .update({ status: 'cancelled' })
             .eq('id', apptId)
             .eq('business_id', businessId);
+
+          // Notify waitlist — fire and forget
+          notifyWaitlistAfterCancel(supabaseAppt, businessId, apptId, botToken).catch(() => {});
         }
         // Confirmation: appointment stays 'scheduled' — just acknowledge the customer
 
@@ -169,9 +172,11 @@ export async function POST(req: Request) {
       }
 
       if (data.startsWith('slot:')) {
-        const parts = data.split(':');
-        const date = parts[1];
-        const time = parts[2];
+        // Format: "slot:YYYY-MM-DD:HH:MM" — time contains a colon, so extract carefully.
+        const withoutPrefix = data.slice('slot:'.length); // "YYYY-MM-DD:HH:MM"
+        const dateEnd = withoutPrefix.indexOf(':');
+        const date = withoutPrefix.slice(0, dateEnd);     // "YYYY-MM-DD"
+        const time = withoutPrefix.slice(dateEnd + 1);    // "HH:MM"
 
         // Enqueue as synthetic booking continuation (idempotent via callback update_id)
         const cbIdempotencyKey = body.update_id != null
@@ -259,4 +264,49 @@ function triggerQueue() {
   if (!baseUrl || !cronSecret) return;
   fetch(`${baseUrl}/api/cron/process-queue?key=${cronSecret}`)
     .catch(() => {});
+}
+
+/** Notify first un-notified waitlist entry for the same service after a cancellation. */
+async function notifyWaitlistAfterCancel(
+  supabase: ReturnType<typeof getSupabaseClient>,
+  businessId: string,
+  apptId: string,
+  botToken: string
+) {
+  const { data: appt } = await (supabase.from('appointments') as any)
+    .select('service_type, appointment_date')
+    .eq('id', apptId)
+    .single();
+  if (!appt?.service_type) return;
+
+  const { data: entry } = await (supabase.from('waitlist') as any)
+    .select('id, customer_chat_id, customer_name, service_type, platform')
+    .eq('business_id', businessId)
+    .eq('service_type', appt.service_type)
+    .is('notified_at', null)
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (!entry?.customer_chat_id || entry.platform !== 'telegram') return;
+
+  const { data: biz } = await (supabase.from('businesses') as any)
+    .select('name')
+    .eq('id', businessId)
+    .single();
+
+  const firstName = entry.customer_name ? entry.customer_name.split(' ')[0] : 'there';
+  const msg = `🎉 *Spot Available!*\n\nGood news, ${firstName}! A spot just opened up for *${entry.service_type}* on ${appt.appointment_date} at *${biz?.name || 'us'}*.\n\nReply "book" to secure your appointment now — slots go fast!`;
+
+  const res = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chat_id: entry.customer_chat_id, text: msg, parse_mode: 'Markdown' }),
+  });
+
+  if (res.ok) {
+    await (supabase.from('waitlist') as any)
+      .update({ notified_at: new Date().toISOString() })
+      .eq('id', entry.id);
+  }
 }

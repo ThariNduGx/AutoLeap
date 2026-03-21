@@ -10,21 +10,25 @@ import { TrendingDown, TrendingUp, DollarSign, Activity, Zap } from 'lucide-reac
 function DashboardContent() {
     const [data, setData] = useState<any>(null);
     const [loading, setLoading] = useState(true);
+    const [fetchError, setFetchError] = useState(false);
 
-    useEffect(() => {
-        async function fetchData() {
-            try {
-                const res = await fetch('/api/costs?days=30');
-                const json = await res.json();
-                setData(json);
-            } catch (err) {
+    function loadData() {
+        setLoading(true);
+        setFetchError(false);
+        fetch('/api/costs?days=30')
+            .then(res => {
+                if (!res.ok) throw new Error('API error');
+                return res.json();
+            })
+            .then(json => setData(json))
+            .catch(err => {
                 console.error('Failed to load data', err);
-            } finally {
-                setLoading(false);
-            }
-        }
-        fetchData();
-    }, []);
+                setFetchError(true);
+            })
+            .finally(() => setLoading(false));
+    }
+
+    useEffect(() => { loadData(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     if (loading) {
         return (
@@ -34,7 +38,22 @@ function DashboardContent() {
         );
     }
 
-    if (!data) return <div>Error loading data</div>;
+    if (fetchError || !data) {
+        return (
+            <div className="flex h-screen items-center justify-center bg-gray-50">
+                <div className="text-center">
+                    <Activity size={40} className="mx-auto mb-3 text-gray-300" />
+                    <p className="text-gray-600 font-medium mb-4">Could not load cost data</p>
+                    <button
+                        onClick={loadData}
+                        className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors"
+                    >
+                        Retry
+                    </button>
+                </div>
+            </div>
+        );
+    }
 
     const { summary, daily } = data;
 

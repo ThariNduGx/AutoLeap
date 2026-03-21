@@ -6,11 +6,11 @@
 import { NextRequest } from 'next/server';
 import { SignJWT, jwtVerify } from 'jose';
 
-const rawSecret = process.env.JWT_SECRET;
-if (!rawSecret) {
-  throw new Error('FATAL: JWT_SECRET environment variable is not set');
+function getJwtSecret(): Uint8Array {
+  const raw = process.env.JWT_SECRET;
+  if (!raw) throw new Error('FATAL: JWT_SECRET environment variable is not set');
+  return new TextEncoder().encode(raw);
 }
-const JWT_SECRET = new TextEncoder().encode(rawSecret);
 
 const JWT_EXPIRY = '7d'; // 7 days
 
@@ -36,7 +36,7 @@ export async function createSessionToken(user: SessionUser): Promise<string> {
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
     .setExpirationTime(JWT_EXPIRY)
-    .sign(JWT_SECRET);
+    .sign(getJwtSecret());
 
   return token;
 }
@@ -46,7 +46,7 @@ export async function createSessionToken(user: SessionUser): Promise<string> {
  */
 export async function verifySessionToken(token: string): Promise<SessionUser | null> {
   try {
-    const verified = await jwtVerify(token, JWT_SECRET);
+    const verified = await jwtVerify(token, getJwtSecret());
     const payload = verified.payload as any;
 
     return {

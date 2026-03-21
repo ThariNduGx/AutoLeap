@@ -41,6 +41,7 @@ export async function POST(request: NextRequest) {
             .from('businesses') as any)
             .update({
                 telegram_bot_token: null,
+                telegram_webhook_secret: null,
             })
             .eq('id', session.businessId);
 

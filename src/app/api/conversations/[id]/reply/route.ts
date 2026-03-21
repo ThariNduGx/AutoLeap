@@ -14,7 +14,7 @@ export const dynamic = 'force-dynamic';
  */
 export async function POST(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await getSession(req);
   if (!session || !hasRole(session, 'business')) {
@@ -37,13 +37,14 @@ export async function POST(
     return NextResponse.json({ error: 'Message too long (max 4000 chars)' }, { status: 400 });
   }
 
+  const { id: convId } = await params;
   const supabase = getSupabaseClient();
 
   // Fetch conversation, verifying it belongs to this business
   const { data: conv } = await (supabase
     .from('conversations') as any)
     .select('id, customer_chat_id, platform, status, business_id')
-    .eq('id', params.id)
+    .eq('id', convId)
     .eq('business_id', businessId)
     .single();
 
@@ -122,7 +123,7 @@ export async function POST(
   const { data: latest } = await (supabase
     .from('conversations') as any)
     .select('history')
-    .eq('id', params.id)
+    .eq('id', convId)
     .single();
 
   const history: any[] = latest?.history || [];
@@ -138,7 +139,7 @@ export async function POST(
       history,
       last_message_at: new Date().toISOString(),
     })
-    .eq('id', params.id);
+    .eq('id', convId);
 
   console.log(`[REPLY] ✅ Owner replied to ${platform} chat ${chatId}`);
   return NextResponse.json({ success: true });

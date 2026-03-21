@@ -45,6 +45,7 @@ export default function BookingsPage() {
     const [selected, setSelected]   = useState<Set<string>>(new Set());
     const [bulkAction, setBulkAction] = useState('');
     const [bulking, setBulking]       = useState(false);
+    const [bulkError, setBulkError]   = useState('');
 
     // CSV export
     const [dateFrom, setDateFrom] = useState(thirtyDaysAgo);
@@ -85,14 +86,22 @@ export default function BookingsPage() {
     async function handleBulk() {
         if (!selected.size || !bulkAction) return;
         setBulking(true);
+        setBulkError('');
         try {
-            await fetch('/api/bookings', {
+            const res = await fetch('/api/bookings', {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ ids: [...selected], status: bulkAction }),
             });
-            setBulkAction('');
-            await fetchBookings();
+            if (!res.ok) {
+                const d = await res.json().catch(() => ({}));
+                setBulkError(d.error || 'Bulk update failed. Please try again.');
+            } else {
+                setBulkAction('');
+                await fetchBookings();
+            }
+        } catch {
+            setBulkError('Network error. Please try again.');
         } finally { setBulking(false); }
     }
 
@@ -185,22 +194,29 @@ export default function BookingsPage() {
 
             {/* Bulk action bar */}
             {selected.size > 0 && (
-                <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3 mb-4 flex items-center gap-3">
-                    <span className="text-sm font-medium text-indigo-700">{selected.size} selected</span>
-                    <select value={bulkAction} onChange={e => setBulkAction(e.target.value)}
-                        className="px-3 py-1.5 border border-indigo-300 rounded-lg text-sm bg-white outline-none">
-                        <option value="">Choose action…</option>
-                        <option value="completed">Mark as Completed</option>
-                        <option value="no_show">Mark as No-show</option>
-                    </select>
-                    <button onClick={handleBulk} disabled={!bulkAction || bulking}
-                        className="px-3 py-1.5 bg-indigo-600 text-white text-sm rounded-lg disabled:opacity-50 hover:bg-indigo-700 flex items-center gap-2">
-                        {bulking ? <Loader2 size={13} className="animate-spin" /> : null}
-                        Apply
-                    </button>
-                    <button onClick={() => setSelected(new Set())} className="text-xs text-indigo-600 hover:underline ml-auto">
-                        Clear
-                    </button>
+                <div className="mb-4 space-y-2">
+                    <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3 flex items-center gap-3">
+                        <span className="text-sm font-medium text-indigo-700">{selected.size} selected</span>
+                        <select value={bulkAction} onChange={e => { setBulkAction(e.target.value); setBulkError(''); }}
+                            className="px-3 py-1.5 border border-indigo-300 rounded-lg text-sm bg-white outline-none">
+                            <option value="">Choose action…</option>
+                            <option value="completed">Mark as Completed</option>
+                            <option value="no_show">Mark as No-show</option>
+                        </select>
+                        <button onClick={handleBulk} disabled={!bulkAction || bulking}
+                            className="px-3 py-1.5 bg-indigo-600 text-white text-sm rounded-lg disabled:opacity-50 hover:bg-indigo-700 flex items-center gap-2">
+                            {bulking ? <Loader2 size={13} className="animate-spin" /> : null}
+                            Apply
+                        </button>
+                        <button onClick={() => { setSelected(new Set()); setBulkError(''); }} className="text-xs text-indigo-600 hover:underline ml-auto">
+                            Clear
+                        </button>
+                    </div>
+                    {bulkError && (
+                        <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700 flex items-center gap-2">
+                            <AlertCircle size={14} /> {bulkError}
+                        </div>
+                    )}
                 </div>
             )}
 

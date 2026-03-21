@@ -10,7 +10,7 @@ export const dynamic = 'force-dynamic';
  */
 export async function PATCH(
     req: NextRequest,
-    { params }: { params: { id: string } }
+    { params }: { params: Promise<{ id: string }> }
 ) {
     const session = await getSession(req);
     if (!session || !hasRole(session, 'business')) {
@@ -22,6 +22,7 @@ export async function PATCH(
         return NextResponse.json({ error: 'No business' }, { status: 400 });
     }
 
+    const { id: convId } = await params;
     const body = await req.json();
 
     const supabase = getSupabaseClient();
@@ -60,7 +61,7 @@ export async function PATCH(
     const { data, error } = await (supabase
         .from('conversations') as any)
         .update(updates)
-        .eq('id', params.id)
+        .eq('id', convId)
         .eq('business_id', businessId)
         .select('id, status, notes, tags')
         .single();
@@ -69,6 +70,6 @@ export async function PATCH(
         return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
 
-    console.log(`[CONVERSATIONS] Updated conv ${params.id}:`, Object.keys(updates));
+    console.log(`[CONVERSATIONS] Updated conv ${convId}:`, Object.keys(updates));
     return NextResponse.json({ success: true, ...data });
 }

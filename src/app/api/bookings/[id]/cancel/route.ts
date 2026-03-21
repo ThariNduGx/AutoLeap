@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic';
 
 export async function POST(
     req: NextRequest,
-    { params }: { params: { id: string } }
+    { params }: { params: Promise<{ id: string }> }
 ) {
     const session = await getSession(req);
 
@@ -20,7 +20,7 @@ export async function POST(
         return NextResponse.json({ error: 'No business associated with this account' }, { status: 400 });
     }
 
-    const { id } = params;
+    const { id } = await params;
     const supabase = getSupabaseClient();
 
     // Fetch the appointment and verify ownership
