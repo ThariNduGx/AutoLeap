@@ -2,7 +2,7 @@
 
 import { getSupabaseClient } from '../infrastructure/supabase';
 import { classifyIntent, classifyIntentLLM, selectModel } from './smart-router';
-import { estimateCost, requestBudget, calculateActualCost, commitCost } from '../infrastructure/cost-tracker';
+import { estimateCost, requestBudget, calculateActualCost, commitCost, releaseBudget } from '../infrastructure/cost-tracker';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { calendarToolsForGemini, executeCalendarTool } from './tools/calendar-tools';
 import type { InlineKeyboardButton } from '../infrastructure/telegram';
@@ -172,45 +172,55 @@ async function processItem(item: QueueItem): Promise<void> {
 
   let result: ProcessingResult;
 
-  switch (intent) {
-    case 'greeting':
-      result = await handleGreeting(message, item.business_id);
-      break;
+  // Safety margin reserved by requestBudget (20% buffer). Released if handler throws.
+  const safetyMarginAmount = estimate.estimatedCost * 1.2;
 
-    case 'faq':
-      result = await handleFAQ(message, item.business_id, model);
-      break;
+  try {
+    switch (intent) {
+      case 'greeting':
+        result = await handleGreeting(message, item.business_id);
+        break;
 
-    case 'booking':
-      result = await handleBooking(message, item.business_id, model, platform, intentEntities);
-      break;
+      case 'faq':
+        result = await handleFAQ(message, item.business_id, model);
+        break;
 
-    case 'status':
-      result = await handleStatus(message, item.business_id);
-      break;
+      case 'booking':
+        result = await handleBooking(message, item.business_id, model, platform, intentEntities);
+        break;
 
-    case 'cancellation':
-      result = await handleCancellation(message, item.business_id);
-      break;
+      case 'status':
+        result = await handleStatus(message, item.business_id);
+        break;
 
-    case 'reschedule':
-      result = await handleReschedule(message, item.business_id, model, platform);
-      break;
+      case 'cancellation':
+        result = await handleCancellation(message, item.business_id);
+        break;
 
-    case 'complaint':
-      result = await handleComplaint(message, item.business_id, model);
-      break;
+      case 'reschedule':
+        result = await handleReschedule(message, item.business_id, model, platform);
+        break;
 
-    default: {
-      // Check if this is a continuation of a booking conversation
-      const conversation = await getActiveConversation(item.business_id, message.chatId);
-      if (conversation && conversation.intent === 'booking') {
-        console.log('[QUEUE] Continuing booking conversation');
-        result = await handleBooking(message, item.business_id, model, platform);
-      } else {
-        result = await handleUnknown(message, item.business_id, model);
+      case 'complaint':
+        result = await handleComplaint(message, item.business_id, model);
+        break;
+
+      default: {
+        // Check if this is a continuation of a booking conversation
+        const conversation = await getActiveConversation(item.business_id, message.chatId);
+        if (conversation && conversation.intent === 'booking') {
+          console.log('[QUEUE] Continuing booking conversation');
+          result = await handleBooking(message, item.business_id, model, platform);
+        } else {
+          result = await handleUnknown(message, item.business_id, model);
+        }
       }
     }
+  } catch (handlerErr) {
+    // Handler threw unexpectedly — release the budget reservation so pending_usage_usd
+    // doesn't stay permanently inflated for this business.
+    await releaseBudget(item.business_id, safetyMarginAmount);
+    throw handlerErr;
   }
 
   if (result.success) {
@@ -1474,10 +1484,19 @@ Customer message: "${message.text}"`;
       }
       return { success: true, response: textResponse, costIncurred: cost };
     }
+
+    // Neither function calls nor text — commit any tokens already consumed before exiting
+    if (totalTokensIn > 0 || totalTokensOut > 0) {
+      const cost = calculateActualCost('gemini-flash-latest' as any, totalTokensIn, totalTokensOut);
+      await commitCost(businessId, cost, 'gemini-flash-latest' as any, totalTokensIn, totalTokensOut);
+    }
     break;
   }
 
-  return { success: true, response: "I'm having trouble processing that. Please try again.", costIncurred: 0 };
+  const fallbackCost = totalTokensIn > 0
+    ? calculateActualCost('gemini-flash-latest' as any, totalTokensIn, totalTokensOut)
+    : 0;
+  return { success: true, response: "I'm having trouble processing that. Please try again.", costIncurred: fallbackCost };
 }
 
 async function handleUnknown(

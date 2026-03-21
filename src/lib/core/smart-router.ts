@@ -25,7 +25,8 @@ const INTENT_RULES: IntentPattern[] = [
     patterns: [
       /^\/cancel\b/i,
       /\b(cancel|cancell?ation)\b.*\b(appointment|booking|reservation|slot)\b/i,
-      /\b(cancel|cancell?ation)\b.*\b(my|the)\b/i,
+      /\b(cancel|cancell?ation)\b.*\b(my|the)\b.*\b(appointment|booking|reservation|slot|visit)\b/i,
+      /\b(i (want|need|would like) to cancel)\b/i,
       /\bdon'?t.*want.*appointment\b/i,
     ],
     priority: 10,
