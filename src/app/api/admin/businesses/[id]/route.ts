@@ -81,10 +81,14 @@ export async function DELETE(
             'cost_logs',
             'booking_attempts',
             'conversations',
-            'faqs',
             'faq_documents',
             'faq_embeddings',
             'appointments',
+            'customers',
+            'services',
+            'blackout_dates',
+            'waitlist',
+            'reviews',
             'budgets',
         ];
         for (const table of tables) {

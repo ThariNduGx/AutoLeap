@@ -135,11 +135,11 @@ export async function GET(req: NextRequest) {
     }));
 
     // ── Daily Bookings Trend ────────────────────────────────
-    const dailyMap: Record<string, { scheduled: number; cancelled: number; completed: number; revenue: number }> = {};
+    const dailyMap: Record<string, { scheduled: number; cancelled: number; completed: number; no_show: number; revenue: number }> = {};
     appointments.forEach(a => {
         const date = a.appointment_date;
         if (!date) return;
-        if (!dailyMap[date]) dailyMap[date] = { scheduled: 0, cancelled: 0, completed: 0, revenue: 0 };
+        if (!dailyMap[date]) dailyMap[date] = { scheduled: 0, cancelled: 0, completed: 0, no_show: 0, revenue: 0 };
         const status = a.status || 'scheduled';
         if (status in dailyMap[date]) {
             (dailyMap[date] as any)[status]++;

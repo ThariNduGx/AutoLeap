@@ -265,6 +265,7 @@ export async function executeCalendarTool(
           google_event_id:   result.eventId,
           status:            'scheduled',
           customer_chat_id:  customer_chat_id || null,
+          platform:          args._platform || null,
           notes:             notes || null,
           price:             finalPrice,
           currency:          finalCurrency,
