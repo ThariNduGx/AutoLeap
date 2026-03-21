@@ -957,7 +957,10 @@ Continue helping them complete the booking. State: ${JSON.stringify(conversation
           const chainResponses = [];
           for (const cc of chainCalls) {
             const ccArgs = { ...cc.args } as any;
-            if (cc.name === 'book_appointment') ccArgs.customer_chat_id = message.chatId;
+            if (cc.name === 'book_appointment') {
+              ccArgs.customer_chat_id = message.chatId;
+              ccArgs._platform = platform;
+            }
             const ccResult = await executeCalendarTool(cc.name, ccArgs, businessId);
 
             if (cc.name === 'get_available_slots' && ccResult.available_slots?.length > 0) {
@@ -1456,7 +1459,7 @@ Customer message: "${message.text}"`;
       }
 
       await updateConversation(conversation.id, conversation.state, conversation.history);
-      currentMessage = { functionResponse: functionResponses } as any;
+      currentMessage = functionResponses as any;
       continue;
     }
 

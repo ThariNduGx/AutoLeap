@@ -7,8 +7,8 @@ export const dynamic = 'force-dynamic';
  * GET/POST /api/cron/reminders
  *
  * Runs every 30 minutes.
- * 1. Sends Telegram appointment reminders using each business's custom reminder_hours schedule.
- * 2. Sends post-appointment review requests (2h after service ends) for Telegram customers.
+ * 1. Sends appointment reminders (Telegram + Messenger) using each business's custom reminder_hours schedule.
+ * 2. Sends post-appointment review requests (2h after service ends) for all platforms.
  *
  * reminder_hours: JSONB array on businesses table, e.g. [48, 24, 2, 1].
  * reminders_sent: JSONB map on appointments, e.g. { "48": true, "24": false }.
@@ -28,9 +28,10 @@ export async function GET(req: Request) {
     console.log('[REMINDERS] Starting reminder + review check...');
     const supabase = getSupabaseClient();
 
+    // Fetch all businesses that have at least one messaging channel configured
     const { data: businesses } = await (supabase.from('businesses') as any)
-      .select('id, name, telegram_bot_token, timezone, reminder_hours')
-      .not('telegram_bot_token', 'is', null);
+      .select('id, name, telegram_bot_token, fb_page_access_token, timezone, reminder_hours')
+      .or('telegram_bot_token.not.is.null,fb_page_access_token.not.is.null');
 
     if (!businesses?.length) return NextResponse.json({ success: true, sent: 0 });
 
@@ -82,7 +83,7 @@ export async function GET(req: Request) {
             : `${hoursAhead} hour${hoursAhead !== 1 ? 's' : ''}`;
 
           const sent = await sendReminderToCustomer(
-            biz.telegram_bot_token, appt, biz.name, label
+            biz.telegram_bot_token, biz.fb_page_access_token, appt, biz.name, label
           );
 
           if (sent) {
@@ -98,33 +99,32 @@ export async function GET(req: Request) {
 
       // ── Post-appointment review requests ──────────────────────────────────
       // Find completed/past scheduled appointments whose end_time + 2h ≈ now
-      // and where review_requested_at is null and platform = telegram
-      const twoHoursAgo = new Date(nowLocal.getTime() - 2 * 3_600_000);
-      const todayStr    = nowLocal.toLocaleDateString('en-CA');
+      // and where review_requested_at is null
+      const nowLocal2 = new Date(new Date().toLocaleString('en-US', { timeZone: tz }));
+      const todayStr    = nowLocal2.toLocaleDateString('en-CA');
 
       const { data: pastAppts } = await (supabase.from('appointments') as any)
         .select('id, customer_name, customer_chat_id, service_type, appointment_date, appointment_time, duration_minutes, platform, review_requested_at')
         .eq('business_id', biz.id)
-        .eq('status', 'scheduled')
+        .in('status', ['scheduled', 'completed'])
         .lte('appointment_date', todayStr)
         .is('review_requested_at', null);
 
       for (const appt of pastAppts || []) {
-        if (appt.platform !== 'telegram') continue;
         if (!appt.customer_chat_id) continue;
 
         const [h, m] = appt.appointment_time.split(':').map(Number);
-        const apptEnd = new Date(nowLocal);
+        const apptEnd = new Date(nowLocal2);
         // appointment_date is "YYYY-MM-DD"; setFullYear month is 0-based so subtract 1.
         const [endYear, endMonthRaw, endDay] = appt.appointment_date.split('-').map(Number);
         apptEnd.setFullYear(endYear, endMonthRaw - 1, endDay);
         apptEnd.setHours(h, m + (appt.duration_minutes || 60), 0, 0);
 
-        const minutesSinceEnd = (nowLocal.getTime() - apptEnd.getTime()) / 60_000;
+        const minutesSinceEnd = (nowLocal2.getTime() - apptEnd.getTime()) / 60_000;
         // Send when 90–150 minutes after end (2h ± 30min window)
         if (minutesSinceEnd < 90 || minutesSinceEnd > 150) continue;
 
-        const sent = await sendReviewRequest(biz.telegram_bot_token, appt, biz.name);
+        const sent = await sendReviewRequest(biz.telegram_bot_token, biz.fb_page_access_token, appt, biz.name);
         if (sent) {
           await (supabase.from('appointments') as any)
             .update({ review_requested_at: new Date().toISOString() })
@@ -149,16 +149,34 @@ export async function POST(req: Request) { return GET(req); }
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function sendReminderToCustomer(
-  botToken: string,
+  botToken: string | null,
+  fbPageToken: string | null,
   appt: { id: string; customer_name: string; customer_chat_id: string; service_type: string; appointment_date: string; appointment_time: string; platform?: string },
   businessName: string,
   timeUntil: string
 ): Promise<boolean> {
-  const platform = appt.platform || 'telegram';
-  if (platform !== 'telegram') return false;
   if (!appt.customer_chat_id || appt.customer_chat_id === 'unknown') return false;
 
-  const msg =
+  const platform = appt.platform || 'telegram';
+
+  const text =
+    `⏰ Appointment Reminder\n\n` +
+    `Hi ${appt.customer_name}! Your appointment is in ${timeUntil}.\n\n` +
+    `${appt.service_type}\n` +
+    `${appt.appointment_date} at ${appt.appointment_time}\n\n` +
+    `${businessName}\n\nPlease confirm or cancel below.`;
+
+  if (platform === 'messenger') {
+    if (!fbPageToken) return false;
+    return sendMessengerMessage(fbPageToken, appt.customer_chat_id, text, [
+      { content_type: 'text', title: '✅ Confirm', payload: `confirm_appt:${appt.id}` },
+      { content_type: 'text', title: '❌ Cancel',  payload: `cancel_appt:${appt.id}` },
+    ]);
+  }
+
+  // Default: Telegram
+  if (!botToken) return false;
+  const mdText =
     `⏰ *Appointment Reminder*\n\n` +
     `Hi ${appt.customer_name}! Your appointment is in *${timeUntil}*.\n\n` +
     `📋 *${appt.service_type}*\n` +
@@ -166,7 +184,7 @@ async function sendReminderToCustomer(
     `🕐 ${appt.appointment_time}\n\n` +
     `📍 *${businessName}*\n\nPlease confirm or cancel below.`;
 
-  return sendTelegramMessage(botToken, appt.customer_chat_id, msg, {
+  return sendTelegramMessage(botToken, appt.customer_chat_id, mdText, {
     inline_keyboard: [[
       { text: '✅ Confirm', callback_data: `confirm_appt:${appt.id}` },
       { text: '❌ Cancel',  callback_data: `cancel_appt:${appt.id}` },
@@ -175,18 +193,39 @@ async function sendReminderToCustomer(
 }
 
 async function sendReviewRequest(
-  botToken: string,
-  appt: { id: string; customer_name: string; customer_chat_id: string; service_type: string },
+  botToken: string | null,
+  fbPageToken: string | null,
+  appt: { id: string; customer_name: string; customer_chat_id: string; service_type: string; platform?: string },
   businessName: string
 ): Promise<boolean> {
   if (!appt.customer_chat_id || appt.customer_chat_id === 'unknown') return false;
 
-  const msg =
+  const platform = appt.platform || 'telegram';
+
+  const text =
+    `⭐ How was your experience?\n\n` +
+    `Hi ${appt.customer_name}! We hope you enjoyed your ${appt.service_type} at ${businessName}.\n` +
+    `We'd love your feedback — please rate your experience:`;
+
+  if (platform === 'messenger') {
+    if (!fbPageToken) return false;
+    return sendMessengerMessage(fbPageToken, appt.customer_chat_id, text, [
+      { content_type: 'text', title: '⭐ 1', payload: `review:${appt.id}:1` },
+      { content_type: 'text', title: '⭐⭐ 2', payload: `review:${appt.id}:2` },
+      { content_type: 'text', title: '⭐⭐⭐ 3', payload: `review:${appt.id}:3` },
+      { content_type: 'text', title: '⭐⭐⭐⭐ 4', payload: `review:${appt.id}:4` },
+      { content_type: 'text', title: '⭐⭐⭐⭐⭐ 5', payload: `review:${appt.id}:5` },
+    ]);
+  }
+
+  // Default: Telegram
+  if (!botToken) return false;
+  const mdText =
     `⭐ *How was your experience?*\n\n` +
     `Hi ${appt.customer_name}! We hope you enjoyed your *${appt.service_type}* at ${businessName}.\n` +
     `We'd love your feedback — please rate your experience:`;
 
-  return sendTelegramMessage(botToken, appt.customer_chat_id, msg, {
+  return sendTelegramMessage(botToken, appt.customer_chat_id, mdText, {
     inline_keyboard: [[
       { text: '⭐ 1', callback_data: `review:${appt.id}:1` },
       { text: '⭐⭐ 2', callback_data: `review:${appt.id}:2` },
@@ -222,6 +261,40 @@ async function sendTelegramMessage(
     return true;
   } catch (err) {
     console.error('[REMINDERS] Network error:', err);
+    return false;
+  }
+}
+
+async function sendMessengerMessage(
+  pageToken: string,
+  recipientId: string,
+  text: string,
+  quickReplies?: { content_type: string; title: string; payload: string }[]
+): Promise<boolean> {
+  try {
+    const body: Record<string, unknown> = {
+      recipient: { id: recipientId },
+      message: { text },
+    };
+    if (quickReplies?.length) {
+      body.message = { text, quick_replies: quickReplies };
+    }
+    const res = await fetch(
+      `https://graph.facebook.com/v24.0/me/messages?access_token=${pageToken}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }
+    );
+    const data = await res.json();
+    if (data.error) {
+      console.warn(`[REMINDERS] Messenger send failed (${recipientId}):`, data.error.message);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error('[REMINDERS] Messenger network error:', err);
     return false;
   }
 }
