@@ -4,22 +4,33 @@ import { getSupabaseClient } from '@/lib/infrastructure/supabase';
 // Edge runtime for zero cold-start latency
 export const runtime = 'edge';
 
+// Telegram webhook payloads are tiny (a few KB at most).
+// Enforce a hard cap so no single request can exhaust Edge memory.
+const MAX_BODY_BYTES = 16_384; // 16 KB
+
 export async function POST(req: Request) {
   try {
-    // 1. SECURITY: validate per-business webhook secret
+    // 1. SECURITY: validate per-business webhook secret (fast reject — no body read yet)
     const incomingSecret = req.headers.get('X-Telegram-Bot-Api-Secret-Token');
     if (!incomingSecret) {
       return new NextResponse('Unauthorized', { status: 401 });
     }
 
-    // 2. SIZE CHECK (DDoS protection)
-    const contentLength = req.headers.get('content-length');
-    if (contentLength && parseInt(contentLength) > 8192) {
+    // 2. SIZE ENFORCEMENT — read as text first so we control exactly how many bytes
+    //    land in memory. Content-Length is optional and trivially spoofed; we MUST
+    //    check the actual body length after reading.
+    const rawBody = await req.text();
+    if (rawBody.length > MAX_BODY_BYTES) {
       return new NextResponse('Payload Too Large', { status: 413 });
     }
 
     // 3. PARSE BODY
-    const body = await req.json();
+    let body: any;
+    try {
+      body = JSON.parse(rawBody);
+    } catch {
+      return new NextResponse('Bad Request', { status: 400 });
+    }
 
     // 4. LOOK UP BUSINESS by per-business webhook secret
     const supabase = getSupabaseClient();
@@ -43,7 +54,7 @@ export async function POST(req: Request) {
       const cq = body.callback_query;
       const data: string = cq.data || '';
 
-      // ── Appointment confirmation from reminder ─────────────────────────
+      // ── Appointment confirmation / cancellation from reminder ──────────────
       if (data.startsWith('confirm_appt:') || data.startsWith('cancel_appt:')) {
         const isConfirm = data.startsWith('confirm_appt:');
         const apptId = data.split(':')[1];
@@ -102,43 +113,53 @@ export async function POST(req: Request) {
         if (apptId && rating >= 1 && rating <= 5) {
           const chatId = cq.message?.chat?.id || cq.from?.id;
 
-          // Save the review — check for duplicate first (customer tapping twice)
-          const { error: reviewErr } = await (supabase.from('reviews') as any).insert({
-            business_id:      businessId,
-            appointment_id:   apptId,
-            customer_chat_id: String(chatId),
-            platform:         'telegram',
-            rating,
-          });
+          // Check for an existing review first — guard against Telegram retrying
+          // the callback_query (which carries the same update_id) and creating
+          // duplicate rows. The DB also has a unique constraint as a safety net.
+          const { data: existing } = await (supabase.from('reviews') as any)
+            .select('id')
+            .eq('appointment_id', apptId)
+            .eq('customer_chat_id', String(chatId))
+            .maybeSingle();
 
-          // If review saved and rating is ≤ 2 stars, alert the owner immediately
-          if (!reviewErr && rating <= 2) {
-            try {
-              const { data: biz } = await (supabase.from('businesses') as any)
-                .select('telegram_bot_token, owner_telegram_chat_id, name')
-                .eq('id', businessId)
-                .single();
-              const { data: apptInfo } = await (supabase.from('appointments') as any)
-                .select('customer_name, service_type, appointment_date')
-                .eq('id', apptId)
-                .single();
-              if (biz?.owner_telegram_chat_id && apptInfo) {
-                const stars = '⭐'.repeat(rating);
-                const alertMsg = `⚠️ *Low Rating Alert*\n\n${stars} (${rating}/5) received from *${apptInfo.customer_name || 'a customer'}*\nService: ${apptInfo.service_type || 'Unknown'}\nDate: ${apptInfo.appointment_date || 'Unknown'}\n\nConsider following up with this customer directly.`;
-                fetch(`https://api.telegram.org/bot${biz.telegram_bot_token}/sendMessage`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    chat_id: biz.owner_telegram_chat_id,
-                    text: alertMsg,
-                    parse_mode: 'Markdown',
-                  }),
-                }).catch(() => {});
-              }
-            } catch { /* non-fatal */ }
+          if (!existing) {
+            const { error: reviewErr } = await (supabase.from('reviews') as any).insert({
+              business_id:      businessId,
+              appointment_id:   apptId,
+              customer_chat_id: String(chatId),
+              platform:         'telegram',
+              rating,
+            });
+
+            // If review saved and rating is ≤ 2 stars, alert the owner immediately
+            if (!reviewErr && rating <= 2) {
+              try {
+                const { data: biz } = await (supabase.from('businesses') as any)
+                  .select('telegram_bot_token, owner_telegram_chat_id, name')
+                  .eq('id', businessId)
+                  .single();
+                const { data: apptInfo } = await (supabase.from('appointments') as any)
+                  .select('customer_name, service_type, appointment_date')
+                  .eq('id', apptId)
+                  .single();
+                if (biz?.owner_telegram_chat_id && apptInfo) {
+                  const stars = '⭐'.repeat(rating);
+                  const alertMsg = `⚠️ *Low Rating Alert*\n\n${stars} (${rating}/5) received from *${apptInfo.customer_name || 'a customer'}*\nService: ${apptInfo.service_type || 'Unknown'}\nDate: ${apptInfo.appointment_date || 'Unknown'}\n\nConsider following up with this customer directly.`;
+                  fetch(`https://api.telegram.org/bot${biz.telegram_bot_token}/sendMessage`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      chat_id: biz.owner_telegram_chat_id,
+                      text: alertMsg,
+                      parse_mode: 'Markdown',
+                    }),
+                  }).catch(() => {});
+                }
+              } catch { /* non-fatal */ }
+            }
           }
 
-          // Ack + remove buttons
+          // Ack + remove buttons (regardless of whether this was a duplicate)
           fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -208,7 +229,7 @@ export async function POST(req: Request) {
           return new NextResponse('Internal Server Error', { status: 500 });
         }
 
-        // Answer callback to remove spinner (use the business's own bot token)
+        // Answer callback to remove spinner
         fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -258,12 +279,15 @@ export async function POST(req: Request) {
   }
 }
 
+// Trigger the queue processor via Authorization header — NOT a query param —
+// so the CRON_SECRET never appears in server logs or CDN access logs.
 function triggerQueue() {
   const baseUrl = process.env.NEXT_PUBLIC_BASE_URL;
   const cronSecret = process.env.CRON_SECRET;
   if (!baseUrl || !cronSecret) return;
-  fetch(`${baseUrl}/api/cron/process-queue?key=${cronSecret}`)
-    .catch(() => {});
+  fetch(`${baseUrl}/api/cron/process-queue`, {
+    headers: { 'Authorization': `Bearer ${cronSecret}` },
+  }).catch(() => {});
 }
 
 /** Notify first un-notified waitlist entry for the same service after a cancellation. */

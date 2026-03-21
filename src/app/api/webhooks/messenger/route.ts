@@ -5,15 +5,14 @@ import { verifyWebhookSignature } from '@/lib/infrastructure/messenger';
 // Force edge runtime for instant startup and low cost
 export const runtime = 'edge';
 
+// Messenger payloads are small (a few KB). Enforce a hard cap.
+const MAX_BODY_BYTES = 16_384; // 16 KB
+
+const GRAPH_API_BASE = 'https://graph.facebook.com/v24.0';
+
 /**
  * GET /webhooks/messenger
- * 
  * Facebook Webhook Verification Endpoint
- * 
- * Facebook will send a GET request with the following query parameters:
- * - hub.mode: 'subscribe'
- * - hub.verify_token: The token you configured in Facebook App settings
- * - hub.challenge: A random string to echo back
  */
 export async function GET(req: Request) {
     try {
@@ -22,28 +21,19 @@ export async function GET(req: Request) {
         const token = url.searchParams.get('hub.verify_token');
         const challenge = url.searchParams.get('hub.challenge');
 
-        console.log('[MESSENGER WEBHOOK] Verification request received');
-
-        // Verify mode
         if (mode !== 'subscribe') {
-            console.error('[MESSENGER WEBHOOK] Invalid mode:', mode);
             return new NextResponse('Invalid mode', { status: 403 });
         }
 
-        // Verify token matches the one we configured
         const verifyToken = process.env.FB_VERIFY_TOKEN;
-
         if (!verifyToken) {
-            console.error('[MESSENGER WEBHOOK] FB_VERIFY_TOKEN not configured');
             return new NextResponse('Server configuration error', { status: 500 });
         }
 
         if (token !== verifyToken) {
-            console.error('[MESSENGER WEBHOOK] Token mismatch');
             return new NextResponse('Invalid verify token', { status: 403 });
         }
 
-        // Return the challenge to complete verification
         console.log('[MESSENGER WEBHOOK] ✅ Verification successful');
         return new NextResponse(challenge, { status: 200 });
 
@@ -55,14 +45,11 @@ export async function GET(req: Request) {
 
 /**
  * POST /webhooks/messenger
- * 
  * Facebook Messenger Event Webhook
- * 
- * Receives incoming messages and events from Messenger
  */
 export async function POST(req: Request) {
     try {
-        // Step 1: Verify webhook signature (CRITICAL for security)
+        // 1. SECURITY: verify HMAC signature before reading body
         const signature = req.headers.get('X-Hub-Signature-256');
         const appSecret = process.env.FB_APP_SECRET;
 
@@ -72,119 +59,229 @@ export async function POST(req: Request) {
         }
 
         if (!signature) {
-            console.error('[MESSENGER WEBHOOK] No signature provided');
             return new NextResponse('Unauthorized', { status: 401 });
         }
 
-        // Read the raw body for signature verification
+        // 2. SIZE ENFORCEMENT — read as text so we control bytes in memory
         const rawBody = await req.text();
+        if (rawBody.length > MAX_BODY_BYTES) {
+            return new NextResponse('Payload Too Large', { status: 413 });
+        }
 
-        // Verify the signature
+        // 3. VERIFY SIGNATURE
         const isValid = await verifyWebhookSignature(signature, rawBody, appSecret);
-
         if (!isValid) {
-            console.error('[MESSENGER WEBHOOK] Invalid signature');
             return new NextResponse('Invalid signature', { status: 401 });
         }
 
-        // Parse the body
-        const body = JSON.parse(rawBody);
+        // 4. PARSE
+        let body: any;
+        try {
+            body = JSON.parse(rawBody);
+        } catch {
+            return new NextResponse('Bad Request', { status: 400 });
+        }
 
-        console.log('[MESSENGER WEBHOOK] Received event:', body.object);
-
-        // Ensure this is a page event
         if (body.object !== 'page') {
             return new NextResponse('OK', { status: 200 });
         }
 
-        // Step 2: Process entries
-        const entries = body.entry || [];
+        // 5. PROCESS ENTRIES — collect all tasks first, then run in parallel
+        const tasks: Promise<void>[] = [];
 
-        for (const entry of entries) {
-            const messagingEvents = entry.messaging || [];
+        for (const entry of (body.entry || [])) {
+            for (const event of (entry.messaging || [])) {
+                const senderId: string = event.sender?.id;
+                const recipientId: string = event.recipient?.id; // Page ID
 
-            for (const event of messagingEvents) {
-                // Extract sender and recipient
-                const senderId = event.sender?.id;
-                const recipientId = event.recipient?.id; // This is the Page ID
+                // Ignore echo messages
+                if (event.message?.is_echo) continue;
 
-                // Step 3: Ignore echo messages (messages sent by the page itself)
-                if (event.message && event.message.is_echo) {
-                    console.log('[MESSENGER WEBHOOK] Ignoring echo message');
+                const quickReplyPayload: string | undefined = event.message?.quick_reply?.payload;
+
+                // ── Appointment confirm / cancel quick reply ───────────────────────
+                if (quickReplyPayload?.startsWith('confirm_appt:') || quickReplyPayload?.startsWith('cancel_appt:')) {
+                    tasks.push(handleApptAction(senderId, recipientId, quickReplyPayload));
                     continue;
                 }
 
-                // Process regular messages
-                if (event.message && event.message.text) {
-                    console.log('[MESSENGER WEBHOOK] Processing message from:', senderId);
-
-                    await processIncomingMessage({
-                        senderId,
-                        recipientId,
-                        text: event.message.text,
-                        messageId: event.message.mid,
-                        timestamp: event.timestamp,
-                        rawPayload: event,
-                    });
+                // ── Review rating quick reply ──────────────────────────────────────
+                if (quickReplyPayload?.startsWith('review:')) {
+                    tasks.push(handleReviewAction(senderId, recipientId, quickReplyPayload, event.message?.mid));
+                    continue;
                 }
 
-                // Handle quick reply slot selection (payload: "SLOT_YYYY-MM-DD_HH:MM")
-                if (event.message?.quick_reply?.payload?.startsWith('SLOT_')) {
-                    const parts = event.message.quick_reply.payload.split('_'); // ['SLOT', 'YYYY-MM-DD', 'HH:MM']
+                // ── Slot selection quick reply ─────────────────────────────────────
+                if (quickReplyPayload?.startsWith('SLOT_')) {
+                    const parts = quickReplyPayload.split('_'); // ['SLOT', 'YYYY-MM-DD', 'HH:MM']
                     const date = parts[1];
                     const time = parts[2];
                     if (date && time) {
-                        console.log('[MESSENGER WEBHOOK] Slot selected:', date, time);
-                        await processIncomingMessage({
-                            senderId,
-                            recipientId,
-                            text: `slot:${date}:${time}`,  // matches Telegram slot: format
-                            messageId: event.message.mid,
+                        tasks.push(processIncomingMessage({
+                            senderId, recipientId,
+                            text: `slot:${date}:${time}`,
+                            messageId: event.message?.mid,
                             timestamp: event.timestamp,
                             rawPayload: event,
-                        });
+                        }));
                     }
                     continue;
                 }
 
-                // Handle postbacks (button clicks from templates)
+                // ── Postback slot selection ────────────────────────────────────────
                 if (event.postback?.payload?.startsWith('SLOT_')) {
                     const parts = event.postback.payload.split('_');
                     const date = parts[1];
                     const time = parts[2];
                     if (date && time) {
-                        await processIncomingMessage({
-                            senderId,
-                            recipientId,
+                        tasks.push(processIncomingMessage({
+                            senderId, recipientId,
                             text: `slot:${date}:${time}`,
                             messageId: `postback_${event.timestamp}`,
                             timestamp: event.timestamp,
                             rawPayload: event,
-                        });
+                        }));
                     }
                     continue;
                 }
 
-                // Handle message reads, deliveries, etc.
-                // We can ignore these for now
+                // ── Regular text message ───────────────────────────────────────────
+                if (event.message?.text) {
+                    tasks.push(processIncomingMessage({
+                        senderId, recipientId,
+                        text: event.message.text,
+                        messageId: event.message.mid,
+                        timestamp: event.timestamp,
+                        rawPayload: event,
+                    }));
+                }
             }
         }
 
-        // Always return 200 OK to Facebook within 20 seconds
+        // Run all event tasks in parallel
+        await Promise.all(tasks);
+
         return new NextResponse('OK', { status: 200 });
 
     } catch (error) {
         console.error('[MESSENGER WEBHOOK] Processing error:', error);
-
-        // Still return 200 to prevent Facebook from retrying
-        // Log the error for debugging
         return new NextResponse('OK', { status: 200 });
     }
 }
 
-/**
- * Process an incoming message by adding it to the queue
- */
+// ── Appointment confirm / cancel ────────────────────────────────────────────
+
+async function handleApptAction(senderId: string, recipientId: string, payload: string) {
+    const isConfirm = payload.startsWith('confirm_appt:');
+    const apptId = payload.split(':')[1];
+    if (!apptId) return;
+
+    const supabase = getSupabaseClient();
+
+    // Look up business + fb_page_access_token
+    const { data: business } = await (supabase.from('businesses') as any)
+        .select('id, fb_page_access_token')
+        .eq('fb_page_id', recipientId)
+        .single();
+    if (!business?.fb_page_access_token) return;
+
+    if (!isConfirm) {
+        await (supabase.from('appointments') as any)
+            .update({ status: 'cancelled' })
+            .eq('id', apptId)
+            .eq('business_id', business.id);
+
+        // Notify waitlist — fire and forget
+        notifyWaitlistAfterCancelMessenger(supabase, business.id, apptId, business.fb_page_access_token).catch(() => {});
+    }
+
+    const ackText = isConfirm
+        ? '✅ Your appointment is confirmed! See you then.'
+        : '❌ Your appointment has been cancelled. Feel free to rebook anytime.';
+
+    fetch(`${GRAPH_API_BASE}/me/messages?access_token=${business.fb_page_access_token}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            recipient: { id: senderId },
+            message: { text: ackText },
+            messaging_type: 'RESPONSE',
+        }),
+    }).catch(() => {});
+}
+
+// ── Review rating ───────────────────────────────────────────────────────────
+
+async function handleReviewAction(
+    senderId: string,
+    recipientId: string,
+    payload: string,
+    messageId: string | undefined,
+) {
+    // payload format: "review:<apptId>:<rating>"
+    const [, apptId, ratingStr] = payload.split(':');
+    const rating = parseInt(ratingStr);
+    if (!apptId || rating < 1 || rating > 5) return;
+
+    const supabase = getSupabaseClient();
+
+    const { data: business } = await (supabase.from('businesses') as any)
+        .select('id, fb_page_access_token, telegram_bot_token, owner_telegram_chat_id, name')
+        .eq('fb_page_id', recipientId)
+        .single();
+    if (!business?.fb_page_access_token) return;
+
+    // Guard against duplicate taps
+    const { data: existing } = await (supabase.from('reviews') as any)
+        .select('id')
+        .eq('appointment_id', apptId)
+        .eq('customer_chat_id', String(senderId))
+        .maybeSingle();
+
+    if (!existing) {
+        const { error: reviewErr } = await (supabase.from('reviews') as any).insert({
+            business_id:      business.id,
+            appointment_id:   apptId,
+            customer_chat_id: String(senderId),
+            platform:         'messenger',
+            rating,
+        });
+
+        // Low-rating alert to owner
+        if (!reviewErr && rating <= 2) {
+            try {
+                const { data: apptInfo } = await (supabase.from('appointments') as any)
+                    .select('customer_name, service_type, appointment_date')
+                    .eq('id', apptId)
+                    .single();
+                if (business.owner_telegram_chat_id && apptInfo && business.telegram_bot_token) {
+                    const stars = '⭐'.repeat(rating);
+                    const alertMsg = `⚠️ *Low Rating Alert*\n\n${stars} (${rating}/5) received from *${apptInfo.customer_name || 'a customer'}*\nService: ${apptInfo.service_type || 'Unknown'}\nDate: ${apptInfo.appointment_date || 'Unknown'}\n\nConsider following up with this customer directly.`;
+                    fetch(`https://api.telegram.org/bot${business.telegram_bot_token}/sendMessage`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ chat_id: business.owner_telegram_chat_id, text: alertMsg, parse_mode: 'Markdown' }),
+                    }).catch(() => {});
+                }
+            } catch { /* non-fatal */ }
+        }
+    }
+
+    // Ack regardless (handles duplicate tap gracefully)
+    const stars = '⭐'.repeat(rating);
+    fetch(`${GRAPH_API_BASE}/me/messages?access_token=${business.fb_page_access_token}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            recipient: { id: senderId },
+            message: { text: `Thank you for your feedback! You rated us ${stars} (${rating}/5). We appreciate it!` },
+            messaging_type: 'RESPONSE',
+        }),
+    }).catch(() => {});
+}
+
+// ── Incoming message → queue ────────────────────────────────────────────────
+
 async function processIncomingMessage(message: {
     senderId: string;
     recipientId: string;
@@ -196,10 +293,9 @@ async function processIncomingMessage(message: {
     try {
         const supabase = getSupabaseClient();
 
-        // Lookup the business by fb_page_id (recipientId is the Page ID)
         const { data: business, error: businessError } = await (supabase
             .from('businesses') as any)
-            .select('id')
+            .select('id, fb_page_access_token')
             .eq('fb_page_id', message.recipientId)
             .single();
 
@@ -208,10 +304,6 @@ async function processIncomingMessage(message: {
             return;
         }
 
-        console.log('[MESSENGER WEBHOOK] Matched to business:', business.id);
-
-        // Add to request queue for async processing.
-        // Use messageId as idempotency key — Facebook may deliver the same event twice.
         const idempotencyKey = message.messageId
             ? `fb:${business.id}:${message.messageId}`
             : undefined;
@@ -236,28 +328,77 @@ async function processIncomingMessage(message: {
             });
 
         if (queueError) {
-            // 23505 = unique_violation → duplicate delivery, silently ignore
             if ((queueError as any).code === '23505') {
                 console.log('[MESSENGER WEBHOOK] Duplicate message ignored:', message.messageId);
+                triggerQueue();
                 return;
             }
             console.error('[MESSENGER WEBHOOK] Queue insert error:', queueError);
             return;
         }
 
-        console.log('[MESSENGER WEBHOOK] ✅ Message queued for processing');
-
-        // Trigger queue processor immediately (fire-and-forget — don't await)
-        const baseUrl = process.env.NEXT_PUBLIC_BASE_URL;
-        const cronSecret = process.env.CRON_SECRET;
-        if (baseUrl && cronSecret) {
-            fetch(`${baseUrl}/api/cron/process-queue?key=${cronSecret}`)
-                .catch(err => console.warn('[MESSENGER WEBHOOK] Failed to trigger queue processor:', err));
-        } else {
-            console.warn('[MESSENGER WEBHOOK] NEXT_PUBLIC_BASE_URL or CRON_SECRET not set — skipping queue trigger');
-        }
-
+        triggerQueue();
     } catch (error) {
         console.error('[MESSENGER WEBHOOK] Message processing error:', error);
+    }
+}
+
+// Trigger the queue processor via Authorization header — NOT a query param —
+// so the CRON_SECRET never appears in server logs or CDN access logs.
+function triggerQueue() {
+    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL;
+    const cronSecret = process.env.CRON_SECRET;
+    if (!baseUrl || !cronSecret) return;
+    fetch(`${baseUrl}/api/cron/process-queue`, {
+        headers: { 'Authorization': `Bearer ${cronSecret}` },
+    }).catch(() => {});
+}
+
+/** Notify first un-notified waitlist entry for the same service after a cancellation (Messenger). */
+async function notifyWaitlistAfterCancelMessenger(
+    supabase: ReturnType<typeof getSupabaseClient>,
+    businessId: string,
+    apptId: string,
+    fbPageToken: string,
+) {
+    const { data: appt } = await (supabase.from('appointments') as any)
+        .select('service_type, appointment_date')
+        .eq('id', apptId)
+        .single();
+    if (!appt?.service_type) return;
+
+    const { data: entry } = await (supabase.from('waitlist') as any)
+        .select('id, customer_chat_id, customer_name, service_type, platform')
+        .eq('business_id', businessId)
+        .eq('service_type', appt.service_type)
+        .is('notified_at', null)
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+
+    if (!entry?.customer_chat_id || entry.platform !== 'messenger') return;
+
+    const { data: biz } = await (supabase.from('businesses') as any)
+        .select('name')
+        .eq('id', businessId)
+        .single();
+
+    const firstName = entry.customer_name ? entry.customer_name.split(' ')[0] : 'there';
+    const msg = `🎉 Spot Available!\n\nGood news, ${firstName}! A spot just opened up for ${entry.service_type} on ${appt.appointment_date} at ${biz?.name || 'us'}.\n\nReply "book" to secure your appointment now — slots go fast!`;
+
+    const res = await fetch(`${GRAPH_API_BASE}/me/messages?access_token=${fbPageToken}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            recipient: { id: entry.customer_chat_id },
+            message: { text: msg },
+            messaging_type: 'UPDATE',
+        }),
+    });
+
+    if (res.ok) {
+        await (supabase.from('waitlist') as any)
+            .update({ notified_at: new Date().toISOString() })
+            .eq('id', entry.id);
     }
 }
