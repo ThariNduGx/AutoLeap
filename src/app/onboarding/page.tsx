@@ -52,6 +52,18 @@ export default function OnboardingPage() {
         setSaving(true);
         setError('');
         try {
+            // Expand weekday/weekend into the per-day JSONB format the DB expects:
+            // { monday: { open, close, enabled }, ..., sunday: { open, close, enabled } }
+            const business_hours = {
+                monday:    { open: weekdayStart, close: weekdayEnd, enabled: true },
+                tuesday:   { open: weekdayStart, close: weekdayEnd, enabled: true },
+                wednesday: { open: weekdayStart, close: weekdayEnd, enabled: true },
+                thursday:  { open: weekdayStart, close: weekdayEnd, enabled: true },
+                friday:    { open: weekdayStart, close: weekdayEnd, enabled: true },
+                saturday:  { open: weekendStart, close: weekendEnd, enabled: weekendStart !== weekendEnd },
+                sunday:    { open: weekendStart, close: weekendEnd, enabled: false },
+            };
+
             const res = await fetch('/api/onboarding/complete', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -59,10 +71,7 @@ export default function OnboardingPage() {
                     name: name.trim(),
                     phone: phone.trim(),
                     service_categories: selectedCategories,
-                    business_hours: {
-                        weekday: { start: weekdayStart, end: weekdayEnd },
-                        weekend: { start: weekendStart, end: weekendEnd },
-                    },
+                    business_hours,
                 }),
             });
             if (!res.ok) {

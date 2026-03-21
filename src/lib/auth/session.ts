@@ -114,7 +114,9 @@ export function createSessionCookie(token: string): string {
 
 /**
  * Create logout cookie string (expires immediately)
+ * Must mirror the same attributes as the session cookie so browsers clear it correctly.
  */
 export function createLogoutCookie(): string {
-  return 'session=; HttpOnly; Path=/; Max-Age=0; SameSite=Strict';
+  const isProduction = process.env.NODE_ENV === 'production';
+  return `session=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax${isProduction ? '; Secure' : ''}`;
 }

@@ -20,6 +20,7 @@ export default function SignupPage() {
         name: '',
         email: '',
         password: '',
+        confirmPassword: '',
     });
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState('');
@@ -27,29 +28,37 @@ export default function SignupPage() {
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError('');
+
+        // Client-side password confirmation check
+        if (formData.password !== formData.confirmPassword) {
+            setError('Passwords do not match');
+            return;
+        }
+
         setIsLoading(true);
 
         try {
+            const { confirmPassword: _, ...payload } = formData;
             const response = await fetch('/api/auth/signup', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify(formData),
+                body: JSON.stringify(payload),
             });
 
             const data = await response.json();
 
             if (!response.ok) {
                 setError(data.error || 'Signup failed');
-                setIsLoading(false);
                 return;
             }
 
-            // Success! Redirect to login
+            // Success — navigate away
             router.push('/auth/login?success=true');
         } catch (err) {
             setError('An unexpected error occurred');
+        } finally {
             setIsLoading(false);
         }
     };
@@ -133,6 +142,19 @@ export default function SignupPage() {
                                         placeholder="Minimum 8 characters"
                                         value={formData.password}
                                         onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                                        required
+                                        minLength={8}
+                                        disabled={isLoading}
+                                    />
+                                </div>
+                                <div className="grid gap-2">
+                                    <Label htmlFor="confirmPassword">Confirm Password</Label>
+                                    <Input
+                                        id="confirmPassword"
+                                        type="password"
+                                        placeholder="Re-enter your password"
+                                        value={formData.confirmPassword}
+                                        onChange={(e) => setFormData({ ...formData, confirmPassword: e.target.value })}
                                         required
                                         minLength={8}
                                         disabled={isLoading}

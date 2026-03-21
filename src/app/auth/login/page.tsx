@@ -50,14 +50,17 @@ export default function LoginPage() {
 
       if (!response.ok) {
         setError(data.error || "Login failed");
-        setIsLoading(false);
         return;
       }
 
-      // Success! Redirect to dashboard
+      // Success — navigate away; keep loading state active during transition
       router.push("/dashboard");
     } catch (err) {
       setError("An unexpected error occurred");
+    } finally {
+      // Only reset loading if we are NOT navigating away (error path).
+      // On success the component unmounts quickly, but resetting here is safe
+      // and prevents a permanently-stuck spinner if router.push ever throws.
       setIsLoading(false);
     }
   };
