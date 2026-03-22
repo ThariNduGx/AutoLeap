@@ -47,7 +47,7 @@ export async function GET(req: NextRequest) {
         // business is newer than the window (e.g. 5 days old but days=30), which
         // would produce a 6x underestimate of projected monthly spend.
         const actualDays = rows.length > 0
-            ? Math.max(1, Math.ceil(
+            ? Math.max(1, Math.floor(
                 (Date.now() - new Date(rows[0].date + 'T00:00:00Z').getTime()) / 86_400_000
               ) + 1)
             : days;
