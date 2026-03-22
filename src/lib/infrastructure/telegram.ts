@@ -43,7 +43,7 @@ export async function sendTelegramMessage(
 
     // Only add reply_to_message_id if it's provided
     // Don't use it for simulated messages
-    if (message.replyToMessageId && message.replyToMessageId < 1000) {
+    if (message.replyToMessageId) {
       body.reply_to_message_id = message.replyToMessageId;
     }
 

@@ -173,6 +173,31 @@ async function processItem(item: QueueItem): Promise<void> {
     return;
   }
 
+  // Hoist Telegram bot token lookup so we can fire the typing indicator before
+  // the AI handler starts (5–30 s), not after it finishes.
+  let botToken: string | null = null;
+  let typingInterval: ReturnType<typeof setInterval> | null = null;
+
+  if (platform !== 'messenger') {
+    const { sendTypingAction } = await import('../infrastructure/telegram');
+    const supabaseForTyping = getSupabaseClient();
+    const { data: biz } = await (supabaseForTyping.from('businesses') as any)
+      .select('telegram_bot_token')
+      .eq('id', item.business_id)
+      .single();
+    botToken = biz?.telegram_bot_token ?? null;
+
+    if (botToken && message.chatId) {
+      // Fire immediately so user sees "typing…" before the AI starts
+      sendTypingAction(botToken, message.chatId);
+      // Renew every 4 s — Telegram typing indicator expires after 5 s
+      typingInterval = setInterval(
+        () => sendTypingAction(botToken!, message.chatId),
+        4_000
+      );
+    }
+  }
+
   let result: ProcessingResult;
 
   // Safety margin reserved by requestBudget (20% buffer). Released if handler throws.
@@ -224,12 +249,14 @@ async function processItem(item: QueueItem): Promise<void> {
     // doesn't stay permanently inflated for this business.
     await releaseBudget(item.business_id, safetyMarginAmount);
     throw handlerErr;
+  } finally {
+    if (typingInterval) clearInterval(typingInterval);
   }
 
   if (result.success) {
-    await markCompleted(item.id, result.response || 'Processed');
-
-    // Route response to the correct platform
+    // Deliver first — only mark complete once the customer has the message.
+    // For Messenger we have no reliable delivery receipt so we mark complete
+    // regardless; for Telegram we use the boolean return to decide.
     if (platform === 'messenger') {
       await sendResponseToMessenger(
         item.raw_payload,
@@ -237,13 +264,20 @@ async function processItem(item: QueueItem): Promise<void> {
         item.business_id,
         result.messengerSlots
       );
+      await markCompleted(item.id, result.response || 'Processed');
     } else {
-      await sendResponseToTelegram(
+      const delivered = await sendResponseToTelegram(
         item.raw_payload,
         result.response || 'Processed',
         item.business_id,
-        result.keyboard
+        result.keyboard,
+        botToken
       );
+      if (delivered) {
+        await markCompleted(item.id, result.response || 'Processed');
+      } else {
+        await markFailed(item.id, 'Telegram delivery failed — will retry');
+      }
     }
 
     console.log('[QUEUE] ✅ Response:', result.response?.substring(0, 50));
@@ -440,34 +474,36 @@ async function sendResponseToTelegram(
   payload: any,
   responseText: string,
   businessId: string,
-  keyboard?: InlineKeyboardButton[][]
-): Promise<void> {
+  keyboard?: InlineKeyboardButton[][],
+  preloadedBotToken?: string | null
+): Promise<boolean> {
   try {
-    const { sendTelegramMessage, sendTypingAction } = await import('../infrastructure/telegram');
+    const { sendTelegramMessage } = await import('../infrastructure/telegram');
 
     const message = payload.message || payload.edited_message;
-    if (!message) return;
+    if (!message) return false;
 
     const chatId = message.chat?.id?.toString();
     const messageId = message.message_id;
-    if (!chatId) return;
+    if (!chatId) return false;
 
-    const supabase = getSupabaseClient();
-    const { data: business } = await (supabase
-      .from('businesses') as any)
-      .select('telegram_bot_token')
-      .eq('id', businessId)
-      .single();
-
-    if (!business || !business.telegram_bot_token) {
-      console.error('[TELEGRAM] No bot token');
-      return;
+    let token = preloadedBotToken;
+    if (!token) {
+      const supabase = getSupabaseClient();
+      const { data: business } = await (supabase
+        .from('businesses') as any)
+        .select('telegram_bot_token')
+        .eq('id', businessId)
+        .single();
+      token = business?.telegram_bot_token;
     }
 
-    await sendTypingAction(business.telegram_bot_token, chatId);
-    await new Promise(resolve => setTimeout(resolve, 500));
+    if (!token) {
+      console.error('[TELEGRAM] No bot token');
+      return false;
+    }
 
-    const sent = await sendTelegramMessage(business.telegram_bot_token, {
+    const sent = await sendTelegramMessage(token, {
       chatId,
       text: responseText,
       replyToMessageId: messageId,
@@ -478,8 +514,10 @@ async function sendResponseToTelegram(
     if (!sent) {
       console.error('[TELEGRAM] Failed to send');
     }
+    return sent;
   } catch (error) {
     console.error('[TELEGRAM] Exception:', error);
+    return false;
   }
 }
 
