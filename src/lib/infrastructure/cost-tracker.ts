@@ -1,4 +1,4 @@
-import { getSupabaseClient, reserveBudget, commitReservedBudget } from './supabase';
+import { getSupabaseClient, reserveBudget, commitReservedBudget, releaseBudgetRPC } from './supabase';
 
 // OpenAI Pricing (as of Nov 2024)
 const MODEL_COSTS = {
@@ -229,41 +229,20 @@ async function checkBudgetAlert(businessId: string): Promise<void> {
 }
 
 /**
- * Release reserved budget if AI call was never made.
+ * Atomically release a reserved budget amount back to pending.
+ * Uses a single SQL UPDATE (GREATEST(0, pending - amount)) to avoid
+ * the read-modify-write race condition present in the old TypeScript
+ * implementation where two concurrent calls could both read the same
+ * pending value and lose one release.
  */
 export async function releaseBudget(
   businessId: string,
   reservedAmount: number
 ): Promise<void> {
-  const supabase = getSupabaseClient();
-
+  if (reservedAmount <= 0) return;
   try {
-    // Get current pending usage first
-    const { data: currentBudget, error: fetchError } = await (supabase
-      .from('budgets') as any)
-      .select('pending_usage_usd')
-      .eq('business_id', businessId)
-      .single();
-
-    if (fetchError) {
-      console.error('[COST] Failed to fetch budget:', fetchError);
-      return;
-    }
-
-    if (currentBudget) {
-      const newPending = Math.max(0, (currentBudget as any).pending_usage_usd - reservedAmount);
-
-      const { error } = await (supabase
-        .from('budgets') as any)
-        .update({ pending_usage_usd: newPending })
-        .eq('business_id', businessId);
-
-      if (error) {
-        console.error('[COST] Failed to release budget:', error);
-      } else {
-        console.log('[COST] 🔓 Released:', reservedAmount.toFixed(6));
-      }
-    }
+    await releaseBudgetRPC(businessId, reservedAmount);
+    console.log('[COST] 🔓 Released:', reservedAmount.toFixed(6));
   } catch (err) {
     console.error('[COST] Exception during budget release:', err);
   }

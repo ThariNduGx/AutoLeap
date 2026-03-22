@@ -73,6 +73,26 @@ export async function commitReservedBudget(
   }
 }
 
+// Atomically decrements pending_usage_usd without a read-modify-write race.
+// Replaces the TypeScript-side SELECT→compute→UPDATE pattern in releaseBudget.
+export async function releaseBudgetRPC(
+  businessId: string,
+  amount: number
+): Promise<void> {
+  const supabase = getSupabaseClient();
+  try {
+    const { error } = await (supabase.rpc as any)('release_budget', {
+      p_business_id: businessId,
+      p_amount: amount,
+    });
+    if (error) {
+      console.error('[BUDGET] Atomic release failed:', error);
+    }
+  } catch (err) {
+    console.error('[BUDGET] Exception during atomic release:', err);
+  }
+}
+
 // Export types for external use
 export type SupabaseClient = ReturnType<typeof getSupabaseClient>;
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];

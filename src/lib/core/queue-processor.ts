@@ -280,8 +280,23 @@ async function processItem(item: QueueItem): Promise<void> {
       }
     }
 
+    // Release the portion of the safety margin that was over-reserved.
+    // commit_reserved_budget only removes actualCost from pending_usage_usd;
+    // the remaining 20% buffer (safetyMarginAmount - actualCost) stays unless
+    // we explicitly release it here.
+    const overReserved = safetyMarginAmount - result.costIncurred;
+    if (overReserved > 0) {
+      await releaseBudget(item.business_id, overReserved);
+    }
+
     console.log('[QUEUE] ✅ Response:', result.response?.substring(0, 50));
   } else {
+    // Handler caught the error internally and returned success:false.
+    // processItem's outer catch (which calls releaseBudget) is never reached
+    // in this path, so we must release the reservation here.
+    if (safetyMarginAmount > 0) {
+      await releaseBudget(item.business_id, safetyMarginAmount);
+    }
     await markFailed(item.id, result.error || 'Unknown error');
     console.error('[QUEUE] ❌ Failed:', result.error);
   }
