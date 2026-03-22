@@ -104,6 +104,12 @@ async function getOAuth2Client(businessId: string): Promise<OAuth2Client | null>
   oauth2Client.on('tokens', async (newTokens) => {
     try {
       const merged = { ...storedToken, ...newTokens };
+      // Preserve the stored refresh token if the new payload omitted it.
+      // Google's refresh response typically omits the key entirely, but guard
+      // against library versions that return { refresh_token: null } explicitly.
+      if (!merged.refresh_token && storedToken.refresh_token) {
+        merged.refresh_token = storedToken.refresh_token;
+      }
       const supabase2 = getSupabaseClient();
       await (supabase2.from('businesses') as any)
         .update({ google_calendar_token: JSON.stringify(merged) })
