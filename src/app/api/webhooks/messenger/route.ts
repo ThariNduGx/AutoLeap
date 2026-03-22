@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getSupabaseClient } from '@/lib/infrastructure/supabase';
 import { verifyWebhookSignature } from '@/lib/infrastructure/messenger';
+import { rateLimitByKey } from '@/lib/infrastructure/rate-limit';
 
 // Force edge runtime for instant startup and low cost
 export const runtime = 'edge';
@@ -301,6 +302,14 @@ async function processIncomingMessage(message: {
 
         if (businessError || !business) {
             console.error('[MESSENGER WEBHOOK] Business not found for page:', message.recipientId);
+            return;
+        }
+
+        // Per-customer rate limit: 5 messages per 10 s per sender per business.
+        // Return silently so Facebook does not retry the dropped message.
+        const rl = await rateLimitByKey(`msg:${business.id}:${message.senderId}`, { limit: 5, windowSeconds: 10 });
+        if (!rl.allowed) {
+            console.warn(`[MESSENGER WEBHOOK] Rate limited sender ${message.senderId} for business ${business.id}`);
             return;
         }
 

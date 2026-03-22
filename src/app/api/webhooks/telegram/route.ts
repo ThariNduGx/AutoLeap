@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSupabaseClient } from '@/lib/infrastructure/supabase';
+import { rateLimitByKey } from '@/lib/infrastructure/rate-limit';
 
 // Edge runtime for zero cold-start latency
 export const runtime = 'edge';
@@ -244,6 +245,19 @@ export async function POST(req: Request) {
     // 6. IGNORE non-message updates
     if (!body.message && !body.edited_message) {
       return new NextResponse('OK', { status: 200 });
+    }
+
+    // 6b. PER-CUSTOMER RATE LIMIT — prevents a single chat from flooding the queue.
+    //     Return 200 so Telegram does not retry the silently-dropped message.
+    const chatId = String(
+      body.message?.chat?.id ?? body.edited_message?.chat?.id ?? 'unknown'
+    );
+    if (chatId !== 'unknown') {
+      const rl = await rateLimitByKey(`msg:${businessId}:${chatId}`, { limit: 5, windowSeconds: 10 });
+      if (!rl.allowed) {
+        console.warn(`[TELEGRAM WEBHOOK] Rate limited chat ${chatId} for business ${businessId}`);
+        return new NextResponse('OK', { status: 200 });
+      }
     }
 
     // 7. ENQUEUE MESSAGE (idempotent — Telegram retries use the same update_id)
