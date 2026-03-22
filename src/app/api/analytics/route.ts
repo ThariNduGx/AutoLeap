@@ -154,8 +154,8 @@ export async function GET(req: NextRequest) {
         if (status in dailyMap[date]) {
             (dailyMap[date] as any)[status]++;
         }
-        // Count revenue for scheduled + completed appointments
-        if ((status === 'scheduled' || status === 'completed') && a.price != null) {
+        // Count revenue only for completed appointments (service delivered)
+        if (status === 'completed' && a.price != null) {
             dailyMap[date].revenue += Number(a.price);
         }
     });
@@ -164,9 +164,10 @@ export async function GET(req: NextRequest) {
         .map(([date, counts]) => ({ date, ...counts }));
 
     // ── Revenue ─────────────────────────────────────────────
-    // Only count scheduled + completed appointments that have a price recorded
+    // Only count completed appointments — scheduled appointments haven't been
+    // delivered yet and could still be cancelled or result in a no-show.
     const revenueAppts = appointments.filter(
-        a => (a.status === 'scheduled' || a.status === 'completed') && a.price != null
+        a => a.status === 'completed' && a.price != null
     );
     const totalRevenue = revenueAppts.reduce((s: number, a: any) => s + Number(a.price), 0);
 
