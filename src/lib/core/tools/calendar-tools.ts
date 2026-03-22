@@ -228,6 +228,36 @@ export async function executeCalendarTool(
         return { error: 'Cannot book an appointment in the past. Please choose a future date.' };
       }
 
+      // Validate requested time is within business hours for that day.
+      // This mirrors the check in get_available_slots and closes the gap where a
+      // customer could bypass the slot-picker UI (e.g. via a crafted slot: callback
+      // or by instructing the LLM directly) to book at a time outside opening hours.
+      {
+        const supabase = getSupabaseClient();
+        const { data: bizHoursRow } = await (supabase
+          .from('businesses') as any)
+          .select('business_hours')
+          .eq('id', businessId)
+          .single();
+
+        const DAYS_OF_WEEK = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+        const dateObjBook = new Date(date + 'T00:00:00Z');
+        const dayName = DAYS_OF_WEEK[dateObjBook.getUTCDay()];
+        const dayConfig = bizHoursRow?.business_hours?.[dayName];
+
+        if (dayConfig?.enabled === false) {
+          return { error: `The business is closed on ${dayName}s. Please choose a different date.` };
+        }
+        if (dayConfig?.open && dayConfig?.close) {
+          if (time < dayConfig.open || time >= dayConfig.close) {
+            return {
+              error: `${time} is outside business hours (${dayConfig.open}–${dayConfig.close}). ` +
+                     `Please choose a time within business hours.`,
+            };
+          }
+        }
+      }
+
       // Validate phone
       const cleaned = customer_phone.replace(/[\s\-\(\)\.]/g, '');
       if (!/^\+?\d{7,15}$/.test(cleaned)) {
@@ -240,13 +270,11 @@ export async function executeCalendarTool(
         return { error: `Service "${service_type}" is not available. Please check available services and try again.` };
       }
 
-      // Resolve price from service/tier if not explicitly passed
-      let finalPrice: number | null = argPrice ?? null;
-      let finalCurrency = argCurrency ?? 'LKR';
-      if (finalPrice === null && svcInfo) {
-        finalPrice    = svcInfo.price;
-        finalCurrency = svcInfo.currency;
-      }
+      // Always resolve price from the DB — never trust the LLM-supplied value.
+      // argPrice is intentionally ignored: a customer could prompt-inject a price
+      // of 0 or a fabricated discount, and the LLM would pass it here unchecked.
+      const finalPrice: number | null = svcInfo?.price ?? null;
+      const finalCurrency: string     = svcInfo?.currency ?? argCurrency ?? 'LKR';
 
       // Atomically lock the slot for 120 seconds to prevent double-booking
       const lockAcquired = await lockSlot(businessId, date, time, 120);
