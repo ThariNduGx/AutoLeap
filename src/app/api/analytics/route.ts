@@ -86,7 +86,8 @@ export async function GET(req: NextRequest) {
         (supabase.from('reviews') as any)
             .select('rating, created_at')
             .eq('business_id', businessId)
-            .gte('created_at', since),
+            .gte('created_at', since)
+            .limit(ROW_CAP),
     ]);
 
     const attempts: any[] = attemptsRes.data || [];
