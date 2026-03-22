@@ -188,7 +188,14 @@ export async function getAvailableSlots(
     const lastPossibleStart = new Date(dayEnd.getTime() - effectiveBlock * 60 * 1000);
 
     while (currentTime <= lastPossibleStart) {
-      allSlots.push(currentTime.toTimeString().substring(0, 5)); // HH:MM
+      allSlots.push(
+        new Intl.DateTimeFormat('en-CA', {
+          timeZone: tz,
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false,
+        }).format(currentTime)
+      ); // HH:MM in business timezone
       currentTime = new Date(currentTime.getTime() + 60 * 60 * 1000); // +1 hour
     }
 

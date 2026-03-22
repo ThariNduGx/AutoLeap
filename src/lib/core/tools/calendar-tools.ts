@@ -234,15 +234,18 @@ export async function executeCalendarTool(
         return { error: 'Invalid phone number. Please provide a valid phone number (e.g., 0771234567 or +94771234567).' };
       }
 
+      // Validate service_type exists in the DB (prevents hallucinated service names)
+      const svcInfo = service_type ? await lookupService(businessId, service_type) : null;
+      if (service_type && !svcInfo) {
+        return { error: `Service "${service_type}" is not available. Please check available services and try again.` };
+      }
+
       // Resolve price from service/tier if not explicitly passed
       let finalPrice: number | null = argPrice ?? null;
       let finalCurrency = argCurrency ?? 'LKR';
-      if (finalPrice === null && service_type) {
-        const svcInfo = await lookupService(businessId, service_type);
-        if (svcInfo) {
-          finalPrice    = svcInfo.price;
-          finalCurrency = svcInfo.currency;
-        }
+      if (finalPrice === null && svcInfo) {
+        finalPrice    = svcInfo.price;
+        finalCurrency = svcInfo.currency;
       }
 
       // Atomically lock the slot for 120 seconds to prevent double-booking
