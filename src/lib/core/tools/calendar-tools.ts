@@ -339,6 +339,12 @@ export async function executeCalendarTool(
         return { error: 'Invalid date format. Use YYYY-MM-DD' };
       }
 
+      // Reject past dates using Asia/Colombo as the reference timezone
+      const todayLKReschedule = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Colombo' }).format(new Date());
+      if (new_date < todayLKReschedule) {
+        return { error: 'Cannot reschedule to a date in the past. Please choose a future date.' };
+      }
+
       // Lock the new slot for 120 seconds to prevent double-booking
       const lockAcquired = await lockSlot(businessId, new_date, new_time, 120);
       if (!lockAcquired) {
