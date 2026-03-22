@@ -175,11 +175,15 @@ async function processItem(item: QueueItem): Promise<void> {
 
   // Hoist Telegram bot token lookup so we can fire the typing indicator before
   // the AI handler starts (5–30 s), not after it finishes.
+  // sendTypingActionFn is also stored at this scope so we can fire one final
+  // refresh just before delivery (see usage below the try/finally block).
   let botToken: string | null = null;
   let typingInterval: ReturnType<typeof setInterval> | null = null;
+  let sendTypingActionFn: ((token: string, chatId: string) => Promise<void>) | null = null;
 
   if (platform !== 'messenger') {
     const { sendTypingAction } = await import('../infrastructure/telegram');
+    sendTypingActionFn = sendTypingAction;
     const supabaseForTyping = getSupabaseClient();
     const { data: biz } = await (supabaseForTyping.from('businesses') as any)
       .select('telegram_bot_token')
@@ -266,6 +270,14 @@ async function processItem(item: QueueItem): Promise<void> {
       );
       await markCompleted(item.id, result.response || 'Processed');
     } else {
+      // Refresh the typing indicator window immediately before the Telegram API
+      // call so "typing…" is still visible during the network round-trip.
+      // The interval was cleared in the finally block above; without this the
+      // last sendTypingAction (up to 4 s ago) may have already expired on slow
+      // connections before the message arrives.
+      if (sendTypingActionFn && botToken && message.chatId) {
+        sendTypingActionFn(botToken, message.chatId); // fire-and-forget
+      }
       const delivered = await sendResponseToTelegram(
         item.raw_payload,
         result.response || 'Processed',
