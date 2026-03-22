@@ -41,6 +41,8 @@ export async function generateEmbedding(
 
 /**
  * Store FAQ with its embedding.
+ * Re-importing the same question (case-insensitive) is idempotent: the answer
+ * and category are updated in place and the embedding is regenerated atomically.
  */
 export async function storeFAQ(
   businessId: string,
@@ -51,50 +53,23 @@ export async function storeFAQ(
   const supabase = getSupabaseClient();
 
   try {
-    // 1. Store FAQ document — upsert to prevent duplicates.
-    //    If a FAQ with the same question (case-insensitive) already exists for
-    //    this business, update its answer instead of inserting a second row.
-    //    This keeps re-imported CSVs idempotent and prevents the vector store
-    //    from filling with duplicate embeddings.
-    const { data: existingFaq } = await (supabase
+    // 1. Atomic upsert — conflict target is (business_id, question_lower), a
+    //    generated column (lower(question)) with a unique index added by
+    //    migration 20260326_faq_dedup.sql. Replaces the old SELECT → INSERT/UPDATE
+    //    pattern which had a TOCTOU race window when two concurrent bulk-import
+    //    workers processed the same question and both read existingFaq === null.
+    const { data: faqDoc, error: upsertError } = await (supabase
       .from('faq_documents') as any)
+      .upsert(
+        { business_id: businessId, question, answer, category },
+        { onConflict: 'business_id,question_lower', ignoreDuplicates: false }
+      )
       .select('id')
-      .eq('business_id', businessId)
-      .ilike('question', question)
-      .maybeSingle();
+      .single();
 
-    let faqDoc: any;
-
-    if (existingFaq) {
-      // Question already exists — update answer/category in place
-      const { data: updated, error: updateError } = await (supabase
-        .from('faq_documents') as any)
-        .update({ answer, category })
-        .eq('id', existingFaq.id)
-        .select()
-        .single();
-      if (updateError || !updated) {
-        console.error('[FAQ] Failed to update document:', updateError);
-        return false;
-      }
-      faqDoc = updated;
-      // Delete the stale embedding row so it gets regenerated below
-      await (supabase.from('faq_embeddings') as any)
-        .delete()
-        .eq('faq_id', faqDoc.id);
-      console.log('[FAQ] ♻️ Updated existing FAQ:', question.substring(0, 50));
-    } else {
-      // New question — insert fresh row
-      const { data: inserted, error: insertError } = await (supabase
-        .from('faq_documents') as any)
-        .insert({ business_id: businessId, question, answer, category })
-        .select()
-        .single();
-      if (insertError || !inserted) {
-        console.error('[FAQ] Failed to store document:', insertError);
-        return false;
-      }
-      faqDoc = inserted;
+    if (upsertError || !faqDoc) {
+      console.error('[FAQ] Failed to upsert document:', upsertError);
+      return false;
     }
 
     // 2. Generate and store embedding (non-fatal — FAQ is usable without it)
@@ -108,12 +83,16 @@ export async function storeFAQ(
         const isGemini = process.env.USE_GEMINI_FOR_DEV === 'true';
         const embeddingColumn = isGemini ? 'embedding_gemini' : 'embedding';
 
+        // Atomic upsert: conflict on faq_id replaces the old DELETE + INSERT
+        // pattern, eliminating the brief window where the FAQ had no embedding
+        // and would be invisible to semantic search. Requires the unique index
+        // idx_faq_embeddings_faq_id added by migration 20260327_rag_fixes.sql.
         const { error: embeddingError } = await (supabase
           .from('faq_embeddings') as any)
-          .insert({
-            faq_id: faqDoc.id,
-            [embeddingColumn]: embedding,
-          });
+          .upsert(
+            { faq_id: faqDoc.id, [embeddingColumn]: embedding },
+            { onConflict: 'faq_id' }
+          );
 
         if (embeddingError) {
           console.warn('[FAQ] ⚠️ Embedding storage failed — FAQ saved without embedding:', embeddingError.message);
@@ -135,6 +114,11 @@ export async function storeFAQ(
 
 /**
  * Search FAQs using semantic similarity.
+ * Returns only results whose similarity meets matchThreshold (default 0.6).
+ * Returns [] when no FAQ meets the threshold — callers must treat an empty
+ * result as a definitive miss and escalate to a human; there is no keyword
+ * fallback here. A keyword fallback would bypass the threshold check and
+ * suppress escalation for messages that have no semantically relevant FAQ.
  */
 export async function searchFAQs(
   businessId: string,
@@ -176,27 +160,9 @@ export async function searchFAQs(
     if (data && data.length > 0) {
       // Increment hit_count for each matched FAQ (fire-and-forget)
       incrementFAQHits(supabase, data.map((r: any) => r.id).filter(Boolean));
-      return data;
     }
 
-    // Hybrid fallback: keyword search when semantic returns nothing
-    console.log('[FAQ] Semantic miss — trying keyword fallback...');
-    const { data: kwData, error: kwError } = await (supabase.rpc as any)('search_faqs_keyword', {
-      p_business_id: businessId,
-      p_query: query,
-      p_limit: matchCount,
-    });
-
-    if (kwError) {
-      console.error('[FAQ] Keyword search failed:', kwError);
-      return [];
-    }
-
-    console.log('[FAQ] Keyword results:', kwData?.length || 0);
-    if (kwData && kwData.length > 0) {
-      incrementFAQHits(supabase, kwData.map((r: any) => r.id).filter(Boolean));
-    }
-    return kwData || [];
+    return data || [];
   } catch (error) {
     console.error('[FAQ] Search exception:', error);
     return [];
