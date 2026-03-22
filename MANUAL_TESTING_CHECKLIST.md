@@ -1,5 +1,41 @@
 # 🧪 AutoLeap - Manual Testing Checklist
 
+## 📋 Table of Contents
+
+1. [Pre-Testing Setup](#pre-testing-setup)
+   - [Environment Check](#environment-check)
+   - [Required Tools](#required-tools)
+2. [Section 1: Database & Authentication Testing](#section-1-database--authentication-testing)
+   - [1.1 Test Database Connection](#11-test-database-connection)
+   - [1.2 Test User Signup](#12-test-user-signup)
+   - [1.3 Test Login](#13-test-login)
+3. [Section 2: Telegram Bot Testing](#section-2-telegram-bot-testing)
+   - [2.1 Setup ngrok (Required for Webhooks)](#21-setup-ngrok-required-for-webhooks)
+   - [2.2 Create Test Telegram Bot](#22-create-test-telegram-bot)
+   - [2.3 Connect Telegram Bot via UI](#23-connect-telegram-bot-via-ui)
+   - [2.4 Test Telegram Webhook](#24-test-telegram-webhook)
+   - [2.5 Test Bot Response (with FAQs)](#25-test-bot-response-with-faqs)
+4. [Section 3: Facebook Messenger Testing](#section-3-facebook-messenger-testing)
+   - [3.1 Setup Facebook App (One-Time)](#31-setup-facebook-app-one-time)
+   - [3.2 Configure Webhooks in Facebook](#32-configure-webhooks-in-facebook)
+   - [3.3 Connect Facebook Page via UI](#33-connect-facebook-page-via-ui)
+   - [3.4 Test Facebook Webhook](#34-test-facebook-webhook)
+   - [3.5 Test Facebook Auto-Response](#35-test-facebook-auto-response)
+5. [Section 4: End-to-End Testing](#section-4-end-to-end-testing)
+   - [4.1 Multi-Platform Test](#41-multi-platform-test)
+   - [4.2 Edge Cases](#42-edge-cases)
+6. [Section 5: Admin Dashboard Testing](#section-5-admin-dashboard-testing)
+   - [5.1 Login as Admin](#51-login-as-admin)
+   - [5.2 View All Businesses](#52-view-all-businesses)
+7. [Section 6: Performance & Security](#section-6-performance--security)
+   - [6.1 API Response Times](#61-api-response-times)
+   - [6.2 Security Checks](#62-security-checks)
+8. [Common Issues & Solutions](#common-issues--solutions)
+9. [Final Checklist](#final-checklist)
+10. [Test Results Summary](#test-results-summary)
+
+---
+
 ## Pre-Testing Setup
 
 ### Environment Check

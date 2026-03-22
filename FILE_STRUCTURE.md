@@ -1,5 +1,40 @@
 # 📂 Complete File Structure
 
+## 📋 Table of Contents
+
+1. [Database Migrations](#database-migrations)
+2. [Authentication & Security](#authentication--security)
+3. [API Routes](#api-routes)
+   - [Authentication](#authentication)
+   - [Admin APIs](#admin-apis)
+   - [Business APIs](#business-apis)
+   - [Facebook Integration](#facebook-integration)
+   - [Webhooks](#webhooks)
+4. [Admin Dashboard](#admin-dashboard)
+5. [Business Dashboard](#business-dashboard)
+6. [Components](#components)
+7. [Type Definitions](#type-definitions)
+8. [Infrastructure (Facebook)](#infrastructure-facebook)
+9. [Queue Processor](#queue-processor)
+10. [Documentation](#documentation)
+11. [Total Files Created/Modified](#total-files-createdmodified)
+    - [NEW Files: 20](#new-files-20)
+    - [MODIFIED Files: 5](#modified-files-5)
+    - [FROM PREVIOUS Implementation: 5](#from-previous-implementation-5)
+12. [Environment Variables Required](#environment-variables-required)
+13. [Routes Map](#routes-map)
+    - [Public](#public)
+    - [Admin (Protected)](#admin-protected)
+    - [Business (Protected)](#business-protected)
+    - [API - Public](#api---public)
+    - [API - Admin Only](#api---admin-only)
+    - [API - Business Only](#api---business-only)
+    - [API - Webhooks](#api---webhooks)
+14. [Key Security Features](#key-security-features)
+15. [Ready to Deploy!](#ready-to-deploy)
+
+---
+
 ## Database Migrations
 ```
 supabase/migrations/

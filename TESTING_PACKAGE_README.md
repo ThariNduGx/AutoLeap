@@ -1,5 +1,26 @@
 # 🎉 AutoLeap Testing & Customer Guide - Complete Package
 
+## 📋 Table of Contents
+
+1. [What's Been Created](#whats-been-created)
+2. [Documentation Files](#documentation-files)
+3. [Environment Setup Complete](#environment-setup-complete)
+4. [How to Test Your Application](#how-to-test-your-application)
+5. [Testing Telegram (Recommended First)](#testing-telegram-recommended-first)
+6. [Testing Facebook (Optional - Requires More Setup)](#testing-facebook-optional---requires-more-setup)
+7. [Customer Onboarding Flow](#customer-onboarding-flow)
+8. [What Each Platform Needs](#what-each-platform-needs)
+9. [Quick Verification Commands](#quick-verification-commands)
+10. [Demo Flow (For Showing Customers)](#demo-flow-for-showing-customers)
+11. [Common Issues & Quick Fixes](#common-issues--quick-fixes)
+12. [Pre-Production Checklist](#pre-production-checklist)
+13. [Next Steps](#next-steps)
+14. [Resources Summary](#resources-summary)
+15. [Summary](#summary)
+16. [Start Testing Now!](#start-testing-now)
+
+---
+
 ## 📦 What's Been Created
 
 I've created a complete testing and customer onboarding package for AutoLeap. Here's everything you have:

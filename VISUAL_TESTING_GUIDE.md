@@ -1,5 +1,22 @@
 # 🎯 AutoLeap Testing Flow - Visual Guide
 
+## 📋 Table of Contents
+
+1. [Complete Testing & Onboarding Flow](#complete-testing--onboarding-flow)
+2. [Platform Comparison](#platform-comparison)
+3. [Testing Priority Recommendation](#testing-priority-recommendation)
+   - [Start with Telegram (Today)](#start-with-telegram-today)
+   - [Add Facebook (Later)](#add-facebook-later)
+4. [Quick Checklist](#quick-checklist)
+   - [Before Testing](#before-testing)
+   - [Telegram Test](#telegram-test)
+   - [Facebook Test (Optional)](#facebook-test-optional)
+5. [Start Testing Command](#start-testing-command)
+6. [Documentation Quick Reference](#documentation-quick-reference)
+7. [Success Metrics](#success-metrics)
+
+---
+
 ## 📊 Complete Testing & Onboarding Flow
 
 ```
