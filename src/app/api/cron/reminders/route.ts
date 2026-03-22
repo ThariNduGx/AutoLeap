@@ -43,7 +43,12 @@ export async function GET(req: Request) {
 
       const nowLocal = new Date(new Date().toLocaleString('en-US', { timeZone: tz }));
 
-      // Quiet hours: skip all messaging between 21:00 and 08:00 local time
+      // Quiet hours: skip all messaging between 21:00 and 08:00 local time.
+      // NOTE: reminders are NOT delayed to morning — if a reminder's ±25-minute send window
+      // falls entirely within quiet hours (e.g. 1-hour reminder for a 22:00 appointment, whose
+      // window is 21:35–22:25) it will be silently missed. This is intentional: sending a
+      // "1-hour reminder" 13 hours early would mislead customers. Businesses should avoid
+      // scheduling reminders for appointments that start after ~21:30.
       const localHour = nowLocal.getHours();
       if (localHour < 8 || localHour >= 21) continue;
 
@@ -94,7 +99,8 @@ export async function GET(req: Request) {
             sentMap[key] = true;
             await (supabase.from('appointments') as any)
               .update({ reminders_sent: sentMap })
-              .eq('id', appt.id);
+              .eq('id', appt.id)
+              .eq('business_id', biz.id);
             totalSent++;
             console.log(`[REMINDERS] ✅ ${hoursAhead}h reminder sent: appt ${appt.id}`);
           }
@@ -132,7 +138,8 @@ export async function GET(req: Request) {
         if (sent) {
           await (supabase.from('appointments') as any)
             .update({ review_requested_at: new Date().toISOString() })
-            .eq('id', appt.id);
+            .eq('id', appt.id)
+            .eq('business_id', biz.id);
           totalSent++;
           console.log(`[REMINDERS] ⭐ Review request sent: appt ${appt.id}`);
         }

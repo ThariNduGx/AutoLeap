@@ -12,7 +12,7 @@ export const dynamic = 'force-dynamic';
  *   - Stuck "processing" items older than 1 hour (presumed crashed)
  *   - Expired conversations older than 30 days
  *
- * Authorization: CRON_SECRET via Bearer header or ?key= query param.
+ * Authorization: CRON_SECRET via Bearer header only (query-param not supported; would log secret).
  * Add to vercel.json: { "path": "/api/cron/cleanup", "schedule": "0 2 * * *" }
  */
 export async function GET(req: Request) {
