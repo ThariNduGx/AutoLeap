@@ -59,11 +59,14 @@ export async function POST(request: NextRequest) {
 
         const supabase = getSupabaseClient();
 
+        // Normalize email to lowercase so login remains case-insensitive
+        const normalizedEmail = email.toLowerCase().trim();
+
         // Check if email already exists
         const { data: existingUser } = await (supabase
             .from('users') as any)
             .select('id')
-            .eq('email', email)
+            .eq('email', normalizedEmail)
             .maybeSingle();
 
         if (existingUser) {
@@ -80,7 +83,7 @@ export async function POST(request: NextRequest) {
         const { data: business, error: businessError } = await (supabase
             .from('businesses') as any)
             .insert({
-                name: businessName,
+                name: businessName.trim(),
             })
             .select()
             .single();
@@ -97,7 +100,7 @@ export async function POST(request: NextRequest) {
         const { data: user, error: userError } = await (supabase
             .from('users') as any)
             .insert({
-                email,
+                email: normalizedEmail,
                 password_hash: passwordHash,
                 name,
                 role: 'business',
@@ -121,20 +124,39 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        // Step 3: Update business with user_id (owner)
-        await (supabase
+        // Step 3: Update business with user_id (owner) — required for email reports
+        const { error: bizLinkError } = await (supabase
             .from('businesses') as any)
             .update({ user_id: user.id })
             .eq('id', business.id);
 
-        console.log('[SIGNUP] ✅ Account created successfully:', email);
+        if (bizLinkError) {
+            // Non-fatal: user and business both exist and are linked via business_id,
+            // but weekly report and budget alert emails won't work until user_id is set.
+            console.error('[SIGNUP] Failed to link user_id on business (non-fatal):', bizLinkError);
+        }
+
+        // Step 4: Pre-create the budget row with the default $10 cap so the
+        // Settings > Budget page shows 0 / $10 immediately instead of 0 / 0.
+        const { error: budgetError } = await (supabase
+            .from('budgets') as any)
+            .insert({ business_id: business.id })
+            .select()
+            .maybeSingle();
+
+        if (budgetError && budgetError.code !== '23505') {
+            // 23505 = unique_violation (row already exists — safe to ignore)
+            console.warn('[SIGNUP] Budget row creation failed (non-fatal):', budgetError);
+        }
+
+        console.log('[SIGNUP] ✅ Account created successfully:', normalizedEmail);
 
         return NextResponse.json({
             success: true,
             message: 'Account created successfully',
             user: {
                 id: user.id,
-                email: user.email,
+                email: normalizedEmail,
                 name: user.name,
             },
             business: {

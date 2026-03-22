@@ -48,9 +48,26 @@ export default function OnboardingPage() {
         return true;
     }
 
-    async function finish() {
-        setSaving(true);
-        setError('');
+    /**
+     * Saves all onboarding data (steps 1–3 + business_hours) to the database.
+     * Returns true on success, false on error (error state is set on the component).
+     *
+     * Called by both "Finish Setup" and "Connect Google Calendar" so that data is
+     * always persisted before we navigate away from this page.
+     */
+    async function saveOnboardingData(): Promise<boolean> {
+        // Expand weekday/weekend into the per-day JSONB format the DB expects:
+        // { monday: { open, close, enabled }, ..., sunday: { open, close, enabled } }
+        const business_hours = {
+            monday:    { open: weekdayStart, close: weekdayEnd, enabled: true },
+            tuesday:   { open: weekdayStart, close: weekdayEnd, enabled: true },
+            wednesday: { open: weekdayStart, close: weekdayEnd, enabled: true },
+            thursday:  { open: weekdayStart, close: weekdayEnd, enabled: true },
+            friday:    { open: weekdayStart, close: weekdayEnd, enabled: true },
+            saturday:  { open: weekendStart, close: weekendEnd, enabled: weekendStart !== weekendEnd },
+            sunday:    { open: weekendStart, close: weekendEnd, enabled: false },
+        };
+
         try {
             const res = await fetch('/api/onboarding/complete', {
                 method: 'POST',
@@ -59,20 +76,48 @@ export default function OnboardingPage() {
                     name: name.trim(),
                     phone: phone.trim(),
                     service_categories: selectedCategories,
-                    business_hours: {
-                        weekday: { start: weekdayStart, end: weekdayEnd },
-                        weekend: { start: weekendStart, end: weekendEnd },
-                    },
+                    business_hours,
                 }),
             });
             if (!res.ok) {
                 const data = await res.json();
                 setError(data.error || 'Failed to save. Please try again.');
-                return;
+                return false;
             }
-            router.push('/dashboard');
+            return true;
         } catch {
             setError('Network error. Please try again.');
+            return false;
+        }
+    }
+
+    async function finish() {
+        setSaving(true);
+        setError('');
+        try {
+            if (await saveOnboardingData()) {
+                router.push('/dashboard');
+            }
+        } finally {
+            setSaving(false);
+        }
+    }
+
+    /**
+     * Saves onboarding data first, then redirects to the Google OAuth flow.
+     * Using window.location.href (not router.push) because the target is an API
+     * route that performs a server-side redirect to Google's consent page.
+     *
+     * The ?from=onboarding param tells the OAuth callback to redirect back to
+     * /dashboard (instead of /dashboard/calendar) once the flow completes.
+     */
+    async function connectCalendar() {
+        setSaving(true);
+        setError('');
+        try {
+            if (await saveOnboardingData()) {
+                window.location.href = '/api/auth/google?from=onboarding';
+            }
         } finally {
             setSaving(false);
         }
@@ -211,8 +256,17 @@ export default function OnboardingPage() {
                                     You can also do this later from the Calendar page.
                                 </p>
                             </div>
-                            <Button variant="outline" className="w-full max-w-xs" asChild>
-                                <a href="/api/auth/google">Connect Google Calendar</a>
+                            <Button
+                                variant="outline"
+                                className="w-full max-w-xs"
+                                onClick={connectCalendar}
+                                disabled={saving}
+                            >
+                                {saving ? (
+                                    <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving…</>
+                                ) : (
+                                    'Connect Google Calendar'
+                                )}
                             </Button>
                             <p className="text-xs text-muted-foreground">Optional — you can skip this step.</p>
                         </div>

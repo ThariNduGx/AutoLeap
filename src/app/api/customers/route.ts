@@ -1,8 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { getSupabaseClient } from '@/lib/infrastructure/supabase';
 import { getSession, hasRole } from '@/lib/auth/session';
 
 export const dynamic = 'force-dynamic';
+
+const CustomerPatchSchema = z.object({
+  notes: z.string().max(5000, 'Notes must be 5000 characters or fewer').nullable().optional(),
+});
 
 /** GET /api/customers — list customers for the business, with booking counts */
 export async function GET(req: NextRequest) {
@@ -10,7 +15,7 @@ export async function GET(req: NextRequest) {
   if (!session || !hasRole(session, 'business')) return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
 
   const { searchParams } = new URL(req.url);
-  const search = searchParams.get('q') || '';
+  const search = (searchParams.get('q') || '').slice(0, 200);
   const customerId = searchParams.get('id');
 
   const supabase = getSupabaseClient();
@@ -62,9 +67,12 @@ export async function PATCH(req: NextRequest) {
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
 
   const body = await req.json();
+  const parsed = CustomerPatchSchema.safeParse(body);
+  if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
+
   const supabase = getSupabaseClient();
   const { data, error } = await (supabase.from('customers') as any)
-    .update({ notes: body.notes ?? null, updated_at: new Date().toISOString() })
+    .update({ notes: parsed.data.notes ?? null, updated_at: new Date().toISOString() })
     .eq('id', id)
     .eq('business_id', session.businessId)
     .select()

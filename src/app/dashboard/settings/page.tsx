@@ -65,6 +65,10 @@ interface BusinessSettings {
     timezone: string;
     business_hours: BusinessHours | null;
     cancellation_window_hours: number;
+    bot_name: string;
+    bot_greeting: string;
+    bot_tone: string;
+    reminder_hours: number[];
 }
 
 /** Inline "are you sure?" confirmation button component */

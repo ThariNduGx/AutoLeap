@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseClient } from '@/lib/infrastructure/supabase';
-import { storeFAQ } from '@/lib/infrastructure/embeddings';
+import { storeFAQ, generateEmbedding } from '@/lib/infrastructure/embeddings';
 import { getSession, hasRole } from '@/lib/auth/session';
 import { rateLimit } from '@/lib/infrastructure/rate-limit';
 
@@ -88,8 +88,86 @@ export async function POST(req: NextRequest) {
 }
 
 /**
+ * PUT /api/faqs
+ *
+ * Update an existing FAQ. Regenerates the embedding for the updated content.
+ * SECURITY: Verifies FAQ belongs to user's business before updating.
+ */
+export async function PUT(req: NextRequest) {
+    try {
+        const session = await getSession(req);
+
+        if (!session || !hasRole(session, 'business')) {
+            return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+        }
+
+        const businessId = session.businessId;
+
+        if (!businessId) {
+            return NextResponse.json({ error: 'No business associated with this account' }, { status: 400 });
+        }
+
+        const body = await req.json();
+        const { id, question, answer, category } = body;
+
+        if (!id || !question || !answer) {
+            return NextResponse.json({ error: 'id, question, and answer are required' }, { status: 400 });
+        }
+
+        const supabase = getSupabaseClient();
+
+        // SECURITY: Verify FAQ belongs to this business before updating
+        const { data: existing } = await (supabase.from('faq_documents') as any)
+            .select('id')
+            .eq('id', id)
+            .eq('business_id', businessId)
+            .single();
+
+        if (!existing) {
+            return NextResponse.json({ error: 'Not found or not authorized' }, { status: 404 });
+        }
+
+        // Update the FAQ document
+        const { error: updateError } = await (supabase.from('faq_documents') as any)
+            .update({ question, answer, category: category || 'general' })
+            .eq('id', id)
+            .eq('business_id', businessId);
+
+        if (updateError) {
+            return NextResponse.json({ error: updateError.message }, { status: 500 });
+        }
+
+        // Regenerate embedding for updated content (non-fatal — FAQ is usable without it)
+        try {
+            const textToEmbed = `${question} ${answer}`;
+            const embedding = await generateEmbedding(textToEmbed, businessId);
+
+            if (embedding) {
+                const isGemini = process.env.USE_GEMINI_FOR_DEV === 'true';
+                const embeddingColumn = isGemini ? 'embedding_gemini' : 'embedding';
+
+                // Replace the existing embedding row (CASCADE ensures old row was not orphaned)
+                await (supabase.from('faq_embeddings') as any)
+                    .delete()
+                    .eq('faq_id', id);
+
+                await (supabase.from('faq_embeddings') as any)
+                    .insert({ faq_id: id, [embeddingColumn]: embedding });
+            }
+        } catch {
+            // Embedding regeneration is non-fatal
+        }
+
+        return NextResponse.json({ success: true });
+    } catch (error) {
+        console.error('[FAQ PUT] Error:', error);
+        return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+    }
+}
+
+/**
  * DELETE /api/faqs
- * 
+ *
  * Delete an FAQ for the authenticated business user ONLY
  * SECURITY: Verifies FAQ belongs to user's business before deleting
  */

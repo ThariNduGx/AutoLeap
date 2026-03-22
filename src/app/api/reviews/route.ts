@@ -1,8 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { getSupabaseClient } from '@/lib/infrastructure/supabase';
 import { getSession, hasRole } from '@/lib/auth/session';
 
 export const dynamic = 'force-dynamic';
+
+/**
+ * POST /api/reviews is called by the bot webhook — not by a logged-in owner.
+ * Requires either appointment_id or customer_chat_id so we can associate the
+ * review with a real customer interaction.
+ */
+const ReviewPostSchema = z.object({
+  business_id: z.string().uuid('business_id must be a valid UUID'),
+  appointment_id: z.string().uuid('appointment_id must be a valid UUID').optional(),
+  customer_chat_id: z.string().max(200).optional(),
+  platform: z.enum(['telegram', 'messenger', 'whatsapp', 'web']).optional(),
+  rating: z.number({ invalid_type_error: 'rating must be a number' }).int().min(1, 'rating must be at least 1').max(5, 'rating must be at most 5'),
+  comment: z.string().max(2000, 'comment must be 2000 characters or fewer').optional(),
+}).refine(
+  d => d.appointment_id || d.customer_chat_id,
+  { message: 'Either appointment_id or customer_chat_id is required' },
+);
 
 /** GET /api/reviews — list reviews for the authenticated business */
 export async function GET(req: NextRequest) {
@@ -33,11 +51,12 @@ export async function GET(req: NextRequest) {
  */
 export async function POST(req: NextRequest) {
   const body = await req.json();
-  const { business_id, appointment_id, customer_chat_id, platform, rating, comment } = body;
-
-  if (!business_id || !rating || rating < 1 || rating > 5) {
-    return NextResponse.json({ error: 'business_id and rating (1-5) are required' }, { status: 400 });
+  const parsed = ReviewPostSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
   }
+
+  const { business_id, appointment_id, customer_chat_id, platform, rating, comment } = parsed.data;
 
   const supabase = getSupabaseClient();
 

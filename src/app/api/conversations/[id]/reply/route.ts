@@ -84,7 +84,9 @@ export async function POST(
         body: JSON.stringify({
           chat_id: chatId,
           text: message,
-          parse_mode: 'Markdown',
+          // No parse_mode: owner messages are plain conversational text.
+          // Applying 'Markdown' causes Telegram to reject any message with
+          // an unbalanced *, _, `, or [ — silently dropping the reply.
         }),
       }
     );
@@ -124,6 +126,7 @@ export async function POST(
     .from('conversations') as any)
     .select('history')
     .eq('id', convId)
+    .eq('business_id', businessId)
     .single();
 
   const history: any[] = latest?.history || [];
@@ -139,7 +142,8 @@ export async function POST(
       history,
       last_message_at: new Date().toISOString(),
     })
-    .eq('id', convId);
+    .eq('id', convId)
+    .eq('business_id', businessId);
 
   console.log(`[REPLY] ✅ Owner replied to ${platform} chat ${chatId}`);
   return NextResponse.json({ success: true });

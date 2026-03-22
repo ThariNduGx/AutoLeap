@@ -135,6 +135,12 @@ export async function executeCalendarTool(
         return { error: 'Invalid date. Use YYYY-MM-DD format with a real calendar date.' };
       }
 
+      // Reject past dates using Asia/Colombo as the reference timezone (en-CA gives YYYY-MM-DD)
+      const todayLK = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Colombo' }).format(new Date());
+      if (date < todayLK) {
+        return { error: 'Cannot check availability for past dates.' };
+      }
+
       // Look up service config for duration, buffer, and min_advance_hours
       const svcConfig = service_name ? await lookupService(businessId, service_name) : null;
 
@@ -161,7 +167,32 @@ export async function executeCalendarTool(
         };
       }
 
-      const slots = await getAvailableSlots(businessId, date, undefined, {
+      // ── Business hours check ─────────────────────────────────────────────
+      const { data: bizHours } = await (supabase
+        .from('businesses') as any)
+        .select('business_hours')
+        .eq('id', businessId)
+        .single();
+
+      const DAYS_OF_WEEK = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+      const dayName = DAYS_OF_WEEK[dateObj.getUTCDay()];
+      const dayConfig = bizHours?.business_hours?.[dayName];
+
+      if (dayConfig && dayConfig.enabled === false) {
+        return {
+          date,
+          available_slots: [],
+          count: 0,
+          closed: true,
+          reason: 'Closed',
+        };
+      }
+
+      const businessHours = dayConfig?.enabled
+        ? { start: dayConfig.open, end: dayConfig.close }
+        : undefined;
+
+      const slots = await getAvailableSlots(businessId, date, businessHours, {
         durationMinutes:   svcConfig?.duration_minutes,
         bufferMinutes:     svcConfig?.buffer_minutes,
         minAdvanceHours:   svcConfig?.min_advance_hours,
@@ -191,25 +222,34 @@ export async function executeCalendarTool(
         currency: argCurrency,
       } = args;
 
+      // Reject past dates using Asia/Colombo as the reference timezone
+      const todayLKBook = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Colombo' }).format(new Date());
+      if (date < todayLKBook) {
+        return { error: 'Cannot book an appointment in the past. Please choose a future date.' };
+      }
+
       // Validate phone
       const cleaned = customer_phone.replace(/[\s\-\(\)\.]/g, '');
       if (!/^\+?\d{7,15}$/.test(cleaned)) {
         return { error: 'Invalid phone number. Please provide a valid phone number (e.g., 0771234567 or +94771234567).' };
       }
 
+      // Validate service_type exists in the DB (prevents hallucinated service names)
+      const svcInfo = service_type ? await lookupService(businessId, service_type) : null;
+      if (service_type && !svcInfo) {
+        return { error: `Service "${service_type}" is not available. Please check available services and try again.` };
+      }
+
       // Resolve price from service/tier if not explicitly passed
       let finalPrice: number | null = argPrice ?? null;
       let finalCurrency = argCurrency ?? 'LKR';
-      if (finalPrice === null && service_type) {
-        const svcInfo = await lookupService(businessId, service_type);
-        if (svcInfo) {
-          finalPrice    = svcInfo.price;
-          finalCurrency = svcInfo.currency;
-        }
+      if (finalPrice === null && svcInfo) {
+        finalPrice    = svcInfo.price;
+        finalCurrency = svcInfo.currency;
       }
 
-      // Atomically lock the slot
-      const lockAcquired = await lockSlot(businessId, date, time, 300);
+      // Atomically lock the slot for 120 seconds to prevent double-booking
+      const lockAcquired = await lockSlot(businessId, date, time, 120);
       if (!lockAcquired) {
         return { error: 'This slot was just booked by another customer. Please choose a different time.' };
       }
@@ -240,12 +280,13 @@ export async function executeCalendarTool(
           google_event_id:   result.eventId,
           status:            'scheduled',
           customer_chat_id:  customer_chat_id || null,
+          platform:          args._platform || null,
           notes:             notes || null,
           price:             finalPrice,
           currency:          finalCurrency,
         });
 
-        // Upsert customer profile
+        // Upsert customer profile and increment total_bookings
         try {
           await (supabase.from('customers') as any)
             .upsert({
@@ -255,8 +296,19 @@ export async function executeCalendarTool(
               platform:    args._platform || null,
               chat_id:     customer_chat_id || null,
               updated_at:  new Date().toISOString(),
-            }, { onConflict: 'business_id,phone', ignoreDuplicates: false })
-          // Increment total_bookings via rpc would be ideal; for now just upsert the profile
+            }, { onConflict: 'business_id,phone', ignoreDuplicates: false });
+
+          // Increment total_bookings counter (same pattern as noshow_count in bookings API)
+          const { data: cust } = await (supabase.from('customers') as any)
+            .select('id, total_bookings')
+            .eq('business_id', businessId)
+            .eq('phone', customer_phone)
+            .maybeSingle();
+          if (cust) {
+            await (supabase.from('customers') as any)
+              .update({ total_bookings: (cust.total_bookings ?? 0) + 1 })
+              .eq('id', cust.id);
+          }
         } catch (custErr) {
           console.warn('[TOOL] Customer profile upsert failed (non-fatal):', custErr);
         }
@@ -287,8 +339,14 @@ export async function executeCalendarTool(
         return { error: 'Invalid date format. Use YYYY-MM-DD' };
       }
 
-      // Lock the new slot first
-      const lockAcquired = await lockSlot(businessId, new_date, new_time, 300);
+      // Reject past dates using Asia/Colombo as the reference timezone
+      const todayLKReschedule = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Colombo' }).format(new Date());
+      if (new_date < todayLKReschedule) {
+        return { error: 'Cannot reschedule to a date in the past. Please choose a future date.' };
+      }
+
+      // Lock the new slot for 120 seconds to prevent double-booking
+      const lockAcquired = await lockSlot(businessId, new_date, new_time, 120);
       if (!lockAcquired) {
         return { error: 'That slot is no longer available. Please choose a different time.' };
       }

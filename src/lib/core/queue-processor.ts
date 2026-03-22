@@ -2,7 +2,7 @@
 
 import { getSupabaseClient } from '../infrastructure/supabase';
 import { classifyIntent, classifyIntentLLM, selectModel } from './smart-router';
-import { estimateCost, requestBudget, calculateActualCost, commitCost } from '../infrastructure/cost-tracker';
+import { estimateCost, requestBudget, calculateActualCost, commitCost, releaseBudget } from '../infrastructure/cost-tracker';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { calendarToolsForGemini, executeCalendarTool } from './tools/calendar-tools';
 import type { InlineKeyboardButton } from '../infrastructure/telegram';
@@ -139,10 +139,13 @@ async function processItem(item: QueueItem): Promise<void> {
   // Inline keyboard slot selections are always booking continuations
   const isSlotCallback = message.text.startsWith('slot:');
 
-  // Skip AI if this conversation has been handed to a human
+  // Skip AI if this conversation has been handed to a human OR escalated.
+  // Both statuses pause AI: the reply route (reply/route.ts:56), the UI reply box
+  // (page.tsx:456), and the "AI is paused" banner (page.tsx:384) all treat them
+  // identically — the queue processor must match that contract.
   const activeConv = await getActiveConversation(item.business_id, message.chatId);
-  if (activeConv && (activeConv as any).status === 'human') {
-    console.log('[QUEUE] Conversation is in human mode — skipping AI');
+  if (activeConv && (activeConv.status === 'human' || activeConv.status === 'escalated')) {
+    console.log('[QUEUE] Conversation is in human/escalated mode — skipping AI');
     await markCompleted(item.id, 'human_mode');
     return;
   }
@@ -170,53 +173,94 @@ async function processItem(item: QueueItem): Promise<void> {
     return;
   }
 
-  let result: ProcessingResult;
+  // Hoist Telegram bot token lookup so we can fire the typing indicator before
+  // the AI handler starts (5–30 s), not after it finishes.
+  // sendTypingActionFn is also stored at this scope so we can fire one final
+  // refresh just before delivery (see usage below the try/finally block).
+  let botToken: string | null = null;
+  let typingInterval: ReturnType<typeof setInterval> | null = null;
+  let sendTypingActionFn: ((token: string, chatId: string) => Promise<void>) | null = null;
 
-  switch (intent) {
-    case 'greeting':
-      result = await handleGreeting(message, item.business_id);
-      break;
+  if (platform !== 'messenger') {
+    const { sendTypingAction } = await import('../infrastructure/telegram');
+    sendTypingActionFn = sendTypingAction;
+    const supabaseForTyping = getSupabaseClient();
+    const { data: biz } = await (supabaseForTyping.from('businesses') as any)
+      .select('telegram_bot_token')
+      .eq('id', item.business_id)
+      .single();
+    botToken = biz?.telegram_bot_token ?? null;
 
-    case 'faq':
-      result = await handleFAQ(message, item.business_id, model);
-      break;
-
-    case 'booking':
-      result = await handleBooking(message, item.business_id, model, platform, intentEntities);
-      break;
-
-    case 'status':
-      result = await handleStatus(message, item.business_id);
-      break;
-
-    case 'cancellation':
-      result = await handleCancellation(message, item.business_id);
-      break;
-
-    case 'reschedule':
-      result = await handleReschedule(message, item.business_id, model, platform);
-      break;
-
-    case 'complaint':
-      result = await handleComplaint(message, item.business_id, model);
-      break;
-
-    default: {
-      // Check if this is a continuation of a booking conversation
-      const conversation = await getActiveConversation(item.business_id, message.chatId);
-      if (conversation && conversation.intent === 'booking') {
-        console.log('[QUEUE] Continuing booking conversation');
-        result = await handleBooking(message, item.business_id, model, platform);
-      } else {
-        result = await handleUnknown(message, item.business_id, model);
-      }
+    if (botToken && message.chatId) {
+      // Fire immediately so user sees "typing…" before the AI starts
+      sendTypingAction(botToken, message.chatId);
+      // Renew every 4 s — Telegram typing indicator expires after 5 s
+      typingInterval = setInterval(
+        () => sendTypingAction(botToken!, message.chatId),
+        4_000
+      );
     }
   }
 
-  if (result.success) {
-    await markCompleted(item.id, result.response || 'Processed');
+  let result: ProcessingResult;
 
-    // Route response to the correct platform
+  // Safety margin reserved by requestBudget (20% buffer). Released if handler throws.
+  const safetyMarginAmount = estimate.estimatedCost * 1.2;
+
+  try {
+    switch (intent) {
+      case 'greeting':
+        result = await handleGreeting(message, item.business_id);
+        break;
+
+      case 'faq':
+        result = await handleFAQ(message, item.business_id, model);
+        break;
+
+      case 'booking':
+        result = await handleBooking(message, item.business_id, model, platform, intentEntities);
+        break;
+
+      case 'status':
+        result = await handleStatus(message, item.business_id);
+        break;
+
+      case 'cancellation':
+        result = await handleCancellation(message, item.business_id);
+        break;
+
+      case 'reschedule':
+        result = await handleReschedule(message, item.business_id, model, platform);
+        break;
+
+      case 'complaint':
+        result = await handleComplaint(message, item.business_id, model);
+        break;
+
+      default: {
+        // Check if this is a continuation of a booking conversation
+        const conversation = await getActiveConversation(item.business_id, message.chatId);
+        if (conversation && conversation.intent === 'booking') {
+          console.log('[QUEUE] Continuing booking conversation');
+          result = await handleBooking(message, item.business_id, model, platform);
+        } else {
+          result = await handleUnknown(message, item.business_id, model);
+        }
+      }
+    }
+  } catch (handlerErr) {
+    // Handler threw unexpectedly — release the budget reservation so pending_usage_usd
+    // doesn't stay permanently inflated for this business.
+    await releaseBudget(item.business_id, safetyMarginAmount);
+    throw handlerErr;
+  } finally {
+    if (typingInterval) clearInterval(typingInterval);
+  }
+
+  if (result.success) {
+    // Deliver first — only mark complete once the customer has the message.
+    // For Messenger we have no reliable delivery receipt so we mark complete
+    // regardless; for Telegram we use the boolean return to decide.
     if (platform === 'messenger') {
       await sendResponseToMessenger(
         item.raw_payload,
@@ -224,17 +268,47 @@ async function processItem(item: QueueItem): Promise<void> {
         item.business_id,
         result.messengerSlots
       );
+      await markCompleted(item.id, result.response || 'Processed');
     } else {
-      await sendResponseToTelegram(
+      // Refresh the typing indicator window immediately before the Telegram API
+      // call so "typing…" is still visible during the network round-trip.
+      // The interval was cleared in the finally block above; without this the
+      // last sendTypingAction (up to 4 s ago) may have already expired on slow
+      // connections before the message arrives.
+      if (sendTypingActionFn && botToken && message.chatId) {
+        sendTypingActionFn(botToken, message.chatId); // fire-and-forget
+      }
+      const delivered = await sendResponseToTelegram(
         item.raw_payload,
         result.response || 'Processed',
         item.business_id,
-        result.keyboard
+        result.keyboard,
+        botToken
       );
+      if (delivered) {
+        await markCompleted(item.id, result.response || 'Processed');
+      } else {
+        await markFailed(item.id, 'Telegram delivery failed — will retry');
+      }
+    }
+
+    // Release the portion of the safety margin that was over-reserved.
+    // commit_reserved_budget only removes actualCost from pending_usage_usd;
+    // the remaining 20% buffer (safetyMarginAmount - actualCost) stays unless
+    // we explicitly release it here.
+    const overReserved = safetyMarginAmount - result.costIncurred;
+    if (overReserved > 0) {
+      await releaseBudget(item.business_id, overReserved);
     }
 
     console.log('[QUEUE] ✅ Response:', result.response?.substring(0, 50));
   } else {
+    // Handler caught the error internally and returned success:false.
+    // processItem's outer catch (which calls releaseBudget) is never reached
+    // in this path, so we must release the reservation here.
+    if (safetyMarginAmount > 0) {
+      await releaseBudget(item.business_id, safetyMarginAmount);
+    }
     await markFailed(item.id, result.error || 'Unknown error');
     console.error('[QUEUE] ❌ Failed:', result.error);
   }
@@ -427,34 +501,36 @@ async function sendResponseToTelegram(
   payload: any,
   responseText: string,
   businessId: string,
-  keyboard?: InlineKeyboardButton[][]
-): Promise<void> {
+  keyboard?: InlineKeyboardButton[][],
+  preloadedBotToken?: string | null
+): Promise<boolean> {
   try {
-    const { sendTelegramMessage, sendTypingAction } = await import('../infrastructure/telegram');
+    const { sendTelegramMessage } = await import('../infrastructure/telegram');
 
     const message = payload.message || payload.edited_message;
-    if (!message) return;
+    if (!message) return false;
 
     const chatId = message.chat?.id?.toString();
     const messageId = message.message_id;
-    if (!chatId) return;
+    if (!chatId) return false;
 
-    const supabase = getSupabaseClient();
-    const { data: business } = await (supabase
-      .from('businesses') as any)
-      .select('telegram_bot_token')
-      .eq('id', businessId)
-      .single();
-
-    if (!business || !business.telegram_bot_token) {
-      console.error('[TELEGRAM] No bot token');
-      return;
+    let token = preloadedBotToken;
+    if (!token) {
+      const supabase = getSupabaseClient();
+      const { data: business } = await (supabase
+        .from('businesses') as any)
+        .select('telegram_bot_token')
+        .eq('id', businessId)
+        .single();
+      token = business?.telegram_bot_token;
     }
 
-    await sendTypingAction(business.telegram_bot_token, chatId);
-    await new Promise(resolve => setTimeout(resolve, 500));
+    if (!token) {
+      console.error('[TELEGRAM] No bot token');
+      return false;
+    }
 
-    const sent = await sendTelegramMessage(business.telegram_bot_token, {
+    const sent = await sendTelegramMessage(token, {
       chatId,
       text: responseText,
       replyToMessageId: messageId,
@@ -465,8 +541,10 @@ async function sendResponseToTelegram(
     if (!sent) {
       console.error('[TELEGRAM] Failed to send');
     }
+    return sent;
   } catch (error) {
     console.error('[TELEGRAM] Exception:', error);
+    return false;
   }
 }
 
@@ -546,16 +624,47 @@ async function handleGreeting(
   businessId: string
 ): Promise<ProcessingResult> {
   const supabase = getSupabaseClient();
-  const { data: business } = await (supabase.from('businesses') as any)
-    .select('name')
-    .eq('id', businessId)
-    .single();
 
-  const name = business?.name || 'our service';
+  // Fetch business settings and check if returning customer — in parallel
+  const [{ data: business }, { data: customer }] = await Promise.all([
+    (supabase.from('businesses') as any)
+      .select('name, bot_name, bot_greeting, bot_tone')
+      .eq('id', businessId)
+      .single(),
+    (supabase.from('customers') as any)
+      .select('name, total_bookings')
+      .eq('business_id', businessId)
+      .eq('chat_id', message.chatId)
+      .maybeSingle(),
+  ]);
+
+  const bizName  = business?.name     || 'our service';
+  const botName  = business?.bot_name || 'Assistant';
+  const botTone  = business?.bot_tone || 'friendly';
+  const botGreet = business?.bot_greeting || '';
+
+  const toneNote =
+    botTone === 'professional' ? 'Be professional and formal.' :
+    botTone === 'casual'       ? 'Be casual and relaxed.' :
+    'Be warm and friendly.';
+
+  // Build personalised opening line
+  let openLine: string;
+  if (customer && (customer.total_bookings ?? 0) > 0) {
+    openLine = `Welcome back, *${customer.name}*! 👋`;
+  } else if (botGreet) {
+    openLine = botGreet.replace('{bot_name}', botName);
+  } else {
+    openLine = `Hello! Welcome to *${bizName}*.`;
+  }
+
+  // Tone-aware help text (unused in the static response but keeps the variable used)
+  void toneNote;
+
   return {
     success: true,
     // §8.3 ethics requirement: disclose AI on first message
-    response: `Hello! Welcome to *${name}*.\n\n_You are chatting with AutoLeap AI — an automated assistant. A human is available if needed._\n\nHow can I help you today?\n\n• Book an appointment\n• Answer questions about our services\n• Check your booking status`,
+    response: `${openLine}\n\n_You are chatting with ${botName} — an AI assistant. A human is available if needed._\n\nHow can I help you today?\n\n• Book an appointment\n• Answer questions about our services\n• Check your booking status`,
     costIncurred: 0,
   };
 }
@@ -569,15 +678,25 @@ async function handleFAQ(
   const { llm } = await import('../infrastructure/llm-adapter');
 
   try {
-    // Fetch active services + tiers in parallel with FAQ search
-    const [relevantFAQs, { data: svcRows }] = await Promise.all([
+    // Fetch active services + tiers + bot settings in parallel with FAQ search
+    const [relevantFAQs, { data: svcRows }, { data: bizRow }] = await Promise.all([
       searchFAQs(businessId, message.text, 0.6, 3),
       (getSupabaseClient().from('services') as any)
         .select('name, description, duration_minutes, price, currency, tiers')
         .eq('business_id', businessId)
         .eq('is_active', true)
         .order('sort_order', { ascending: true }),
+      (getSupabaseClient().from('businesses') as any)
+        .select('bot_name, bot_tone')
+        .eq('id', businessId)
+        .single(),
     ]);
+    const botName = bizRow?.bot_name || 'Assistant';
+    const botTone = bizRow?.bot_tone || 'friendly';
+    const toneInstruction =
+      botTone === 'professional' ? 'Be professional and formal.' :
+      botTone === 'casual'       ? 'Be casual and relaxed.' :
+      'Be warm, friendly and concise.';
 
     // Build a services pricing block (injected into the FAQ context so the AI
     // can answer pricing questions even if there's no dedicated FAQ for them)
@@ -598,10 +717,30 @@ async function handleFAQ(
         }).join('\n');
     }
 
-    if (relevantFAQs.length === 0 && !servicesPricingBlock) {
+    if (relevantFAQs.length === 0) {
+      // No relevant FAQ found — escalate so the business owner is notified in the
+      // dashboard regardless of whether services are configured. Without this guard,
+      // any business with active services would never escalate through the FAQ handler,
+      // because servicesPricingBlock is non-empty whenever services exist. The AI
+      // prompt's CRITICAL RULES already handle pricing questions when FAQs are present;
+      // here we need to guarantee escalation on every FAQ miss.
+      const supabase = getSupabaseClient();
+      await (supabase.from('conversations') as any)
+        .upsert(
+          {
+            business_id: businessId,
+            customer_chat_id: message.chatId,
+            intent: 'faq',
+            status: 'escalated',
+            state: {},
+            history: [],
+          },
+          { onConflict: 'business_id,customer_chat_id' }
+        );
+      console.log('[FAQ] ⚑ No match — conversation escalated for human follow-up');
       return {
         success: true,
-        response: "I don't have information about that. Let me connect you with a team member who can help.",
+        response: "I don't have information about that. I've flagged this for a team member who will follow up with you shortly.",
         costIncurred: 0,
       };
     }
@@ -610,17 +749,18 @@ async function handleFAQ(
       ? '\n\nFAQs:\n' + relevantFAQs.map((faq, i) => `[${i + 1}] Q: ${faq.question}\nA: ${faq.answer}`).join('\n\n')
       : '';
 
-    const prompt = `You are a helpful assistant for a service business. Answer the customer's question using the provided FAQs and/or services pricing information below.
+    const prompt = `You are ${botName}, a helpful assistant for a service business. ${toneInstruction}
+ALWAYS respond in the same language the customer writes in (Sinhala, Tamil, English, or any other language).
 ${faqContext}${servicesPricingBlock}
 
 Customer Question: ${message.text}
 
-Instructions:
+CRITICAL RULES — follow exactly:
+- Answer ONLY using the FAQs and/or services listed above. Do not use any other knowledge.
+- If the answer is not present in the provided context, respond with exactly: "I don't have that information. Let me connect you with the team."
+- Do NOT guess, infer, or draw on general knowledge outside the context above.
 - If the customer asks about prices, list ALL relevant packages with their prices clearly.
-- Answer briefly and naturally.
-- If you cannot find the answer, say you don't have that information.
-- Keep response under 150 words.
-- Be friendly and professional.`;
+- Keep response under 150 words.`;
 
     const response = await llm.chat.completions.create({
       model: model as any,
@@ -829,9 +969,10 @@ Continue helping them complete the booking. State: ${JSON.stringify(conversation
 
           const toolArgs = { ...call.args } as any;
 
-          // Inject customer_chat_id so appointments can be looked up by chat later
+          // Inject customer_chat_id and platform so customer profiles are saved correctly
           if (call.name === 'book_appointment') {
             toolArgs.customer_chat_id = message.chatId;
+            toolArgs._platform = platform;
           }
 
           const toolResult = await executeCalendarTool(call.name, toolArgs, businessId);
@@ -914,7 +1055,10 @@ Continue helping them complete the booking. State: ${JSON.stringify(conversation
           const chainResponses = [];
           for (const cc of chainCalls) {
             const ccArgs = { ...cc.args } as any;
-            if (cc.name === 'book_appointment') ccArgs.customer_chat_id = message.chatId;
+            if (cc.name === 'book_appointment') {
+              ccArgs.customer_chat_id = message.chatId;
+              ccArgs._platform = platform;
+            }
             const ccResult = await executeCalendarTool(cc.name, ccArgs, businessId);
 
             if (cc.name === 'get_available_slots' && ccResult.available_slots?.length > 0) {
@@ -1337,9 +1481,15 @@ async function handleReschedule(
 
   const tz = bizTzR?.timezone ?? 'Asia/Colombo';
   const botName = bizTzR?.bot_name || 'Assistant';
+  const botToneR = bizTzR?.bot_tone || 'friendly';
+  const toneInstructionR =
+    botToneR === 'professional' ? 'Be professional and formal.' :
+    botToneR === 'casual'       ? 'Be casual and relaxed.' :
+    'Be warm, friendly and concise.';
 
   const reschedulePrompt =
-    `You are ${botName}, a friendly booking assistant.
+    `You are ${botName}, a booking assistant. ${toneInstructionR}
+ALWAYS respond in the same language the customer writes in (Sinhala, Tamil, English, or any other language).
 
 The customer wants to reschedule their existing appointment:
 - Service: ${appointment.service_type}
@@ -1407,7 +1557,7 @@ Customer message: "${message.text}"`;
       }
 
       await updateConversation(conversation.id, conversation.state, conversation.history);
-      currentMessage = { functionResponse: functionResponses } as any;
+      currentMessage = functionResponses as any;
       continue;
     }
 
@@ -1422,10 +1572,19 @@ Customer message: "${message.text}"`;
       }
       return { success: true, response: textResponse, costIncurred: cost };
     }
+
+    // Neither function calls nor text — commit any tokens already consumed before exiting
+    if (totalTokensIn > 0 || totalTokensOut > 0) {
+      const cost = calculateActualCost('gemini-flash-latest' as any, totalTokensIn, totalTokensOut);
+      await commitCost(businessId, cost, 'gemini-flash-latest' as any, totalTokensIn, totalTokensOut);
+    }
     break;
   }
 
-  return { success: true, response: "I'm having trouble processing that. Please try again.", costIncurred: 0 };
+  const fallbackCost = totalTokensIn > 0
+    ? calculateActualCost('gemini-flash-latest' as any, totalTokensIn, totalTokensOut)
+    : 0;
+  return { success: true, response: "I'm having trouble processing that. Please try again.", costIncurred: fallbackCost };
 }
 
 async function handleUnknown(

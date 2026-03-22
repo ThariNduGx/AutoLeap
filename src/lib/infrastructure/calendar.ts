@@ -34,6 +34,28 @@ function getTzOffset(timezone: string, date: string): string {
 const calendar = google.calendar('v3');
 
 /**
+ * Invalidate all availability cache entries for a given business + date.
+ * The cache key includes service-specific suffixes (durationMinutes:bufferMinutes),
+ * so a plain redis.del() on the base key would leave stale entries. This helper
+ * scans with a wildcard and deletes every matching key.
+ */
+async function invalidateAvailabilityCache(businessId: string, date: string): Promise<void> {
+  try {
+    const pattern = `calendar:availability:${businessId}:${date}:*`;
+    const keys = await redis.keys(pattern);
+    // Also delete the base key (written by minAdvanceHours===0 paths without suffix)
+    const baseKey = `calendar:availability:${businessId}:${date}`;
+    const allKeys = Array.from(new Set([...keys, baseKey]));
+    if (allKeys.length > 0) {
+      await redis.del(...allKeys);
+      console.log('[CALENDAR] 🧹 Cache invalidated for', date, `(${allKeys.length} key(s))`);
+    }
+  } catch (err) {
+    console.warn('[CALENDAR] Cache invalidation failed (non-fatal):', err);
+  }
+}
+
+/**
  * Get OAuth2 client for a business
  */
 interface BusinessCalendarConfig {
@@ -73,7 +95,30 @@ async function getOAuth2Client(businessId: string): Promise<OAuth2Client | null>
     process.env.GOOGLE_REDIRECT_URI
   );
 
-  oauth2Client.setCredentials(JSON.parse(business.google_calendar_token));
+  const storedToken = JSON.parse(business.google_calendar_token);
+  oauth2Client.setCredentials(storedToken);
+
+  // Persist auto-refreshed access tokens so serverless cold-starts always have
+  // a valid stored credential. Without this the new access_token is only kept
+  // in-memory and lost between requests; the stored token grows stale.
+  oauth2Client.on('tokens', async (newTokens) => {
+    try {
+      const merged = { ...storedToken, ...newTokens };
+      // Preserve the stored refresh token if the new payload omitted it.
+      // Google's refresh response typically omits the key entirely, but guard
+      // against library versions that return { refresh_token: null } explicitly.
+      if (!merged.refresh_token && storedToken.refresh_token) {
+        merged.refresh_token = storedToken.refresh_token;
+      }
+      const supabase2 = getSupabaseClient();
+      await (supabase2.from('businesses') as any)
+        .update({ google_calendar_token: JSON.stringify(merged) })
+        .eq('id', businessId);
+      console.log('[CALENDAR] 🔄 Refreshed OAuth tokens persisted for business:', businessId);
+    } catch (err) {
+      console.warn('[CALENDAR] Failed to persist refreshed tokens (non-fatal):', err);
+    }
+  });
 
   return oauth2Client;
 }
@@ -149,7 +194,14 @@ export async function getAvailableSlots(
     const lastPossibleStart = new Date(dayEnd.getTime() - effectiveBlock * 60 * 1000);
 
     while (currentTime <= lastPossibleStart) {
-      allSlots.push(currentTime.toTimeString().substring(0, 5)); // HH:MM
+      allSlots.push(
+        new Intl.DateTimeFormat('en-CA', {
+          timeZone: tz,
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false,
+        }).format(currentTime)
+      ); // HH:MM in business timezone
       currentTime = new Date(currentTime.getTime() + 60 * 60 * 1000); // +1 hour
     }
 
@@ -254,14 +306,12 @@ export async function rescheduleAppointment(
       .eq('id', appointmentId)
       .eq('business_id', businessId);
 
-    // Invalidate availability cache for both dates
-    try {
-      const oldApptDate = appt.appointment_date;
-      await Promise.all([
-        redis.del(`calendar:availability:${businessId}:${details.newDate}`),
-        oldApptDate && redis.del(`calendar:availability:${businessId}:${oldApptDate}`),
-      ]);
-    } catch { /* non-fatal */ }
+    // Invalidate all availability cache variants (service-specific suffixes included) for both dates
+    const oldApptDate = appt.appointment_date;
+    await Promise.all([
+      invalidateAvailabilityCache(businessId, details.newDate),
+      oldApptDate ? invalidateAvailabilityCache(businessId, oldApptDate) : Promise.resolve(),
+    ]);
 
     console.log('[CALENDAR] ✅ Appointment rescheduled:', appointmentId);
     return { success: true };
@@ -330,13 +380,8 @@ export async function createAppointment(
 
     console.log('[CALENDAR] ✅ Appointment created:', event.data.id);
 
-    // Invalidate cache for this date
-    try {
-      await redis.del(`calendar:availability:${businessId}:${details.date}`);
-      console.log('[CALENDAR] 🧹 Cache invalidated for', details.date);
-    } catch (err) {
-      console.warn('[CALENDAR] Failed to invalidate cache:', err);
-    }
+    // Invalidate all availability cache variants (service-specific suffixes included) for this date
+    await invalidateAvailabilityCache(businessId, details.date);
 
     return {
       success: true,

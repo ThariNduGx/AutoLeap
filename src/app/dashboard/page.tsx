@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { MessageSquare, Calendar, TrendingUp, CheckCircle2, XCircle, RefreshCw, Target } from 'lucide-react';
+import { MessageSquare, Calendar, TrendingUp, CheckCircle2, XCircle, RefreshCw, Target, Megaphone } from 'lucide-react';
 
 interface DashboardStats {
     businessName: string;
@@ -13,6 +13,7 @@ interface DashboardStats {
     todayAppointments: number;
     bookingCompletionRate: number | null;
     bookingAttempts: number;
+    globalAnnouncement?: string;
 }
 
 export default function DashboardPage() {
@@ -83,6 +84,13 @@ export default function DashboardPage() {
 
     return (
         <div className="p-8 max-w-7xl mx-auto">
+            {/* Global announcement banner */}
+            {stats?.globalAnnouncement && (
+                <div className="mb-6 flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+                    <Megaphone size={16} className="text-amber-600 mt-0.5 shrink-0" />
+                    <p className="text-sm text-amber-800">{stats.globalAnnouncement}</p>
+                </div>
+            )}
             {/* Header */}
             <div className="mb-8 flex items-start justify-between">
                 <div>

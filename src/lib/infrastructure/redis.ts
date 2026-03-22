@@ -9,7 +9,7 @@ export async function lockSlot(
   businessId: string,
   date: string,
   time: string,
-  ttlSeconds: number = 300
+  ttlSeconds: number = 120
 ): Promise<boolean> {
   const key = `slot:${businessId}:${date}:${time}`;
   

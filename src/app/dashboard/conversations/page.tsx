@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Search, MessageSquare, Bot, User, RefreshCw, AlertTriangle, CheckCircle, ShieldAlert, Send, Loader2, Download, StickyNote, Tag, X as XIcon, Plus } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
+import { getSupabaseBrowserClient } from '@/lib/infrastructure/supabase-browser';
 
 interface Conversation {
     id: string;
@@ -73,9 +74,29 @@ export default function ConversationsPage() {
 
     useEffect(() => {
         fetchConversations();
-        // Poll every 10 seconds for new conversations
+        // Polling kept as a fallback for environments where Realtime is unavailable
         const timer = setInterval(fetchConversations, 10_000);
         return () => clearInterval(timer);
+    }, [fetchConversations]);
+
+    // Supabase Realtime: push updates to the UI instantly when any conversation
+    // row changes (new message, status change, etc.).  The subscription only fires
+    // a refetch through the authenticated REST API — no raw data crosses the
+    // anon-key channel, so there is no security or data-leak risk.
+    useEffect(() => {
+        const supabase = getSupabaseBrowserClient();
+        if (!supabase) return; // graceful degradation when env var is absent
+
+        const channel = supabase
+            .channel('conversations-live')
+            .on(
+                'postgres_changes',
+                { event: '*', schema: 'public', table: 'conversations' },
+                () => { fetchConversations(); }
+            )
+            .subscribe();
+
+        return () => { supabase.removeChannel(channel); };
     }, [fetchConversations]);
 
     async function sendReply() {
@@ -359,18 +380,23 @@ export default function ConversationsPage() {
                                         const isOwner = h.role === 'owner';
                                         const text = h.parts?.find((p: any) => p.text)?.text || '';
                                         if (!text) return null;
+                                        // Layout: owner messages (sent by viewer) → right.
+                                        // Customer and AI messages (received) → left.
+                                        // Previously isUser was also justify-end, placing customer
+                                        // bubbles on the same side as the owner — impossible to
+                                        // distinguish at a glance.
                                         return (
-                                            <div key={i} className={`flex ${isUser || isOwner ? 'justify-end' : 'justify-start'}`}>
+                                            <div key={i} className={`flex ${isOwner ? 'justify-end' : 'justify-start'}`}>
                                                 <div className={`max-w-[80%] px-3 py-2 rounded-xl text-sm leading-relaxed ${
-                                                    isUser
-                                                        ? 'bg-indigo-600 text-white rounded-tr-none'
-                                                        : isOwner
+                                                    isOwner
                                                         ? 'bg-orange-500 text-white rounded-tr-none'
+                                                        : isUser
+                                                        ? 'bg-indigo-100 text-indigo-900 border border-indigo-200 rounded-tl-none'
                                                         : 'bg-white text-gray-800 border border-gray-200 rounded-tl-none shadow-sm'
                                                 }`}>
-                                                    {isOwner && (
-                                                        <p className="text-xs opacity-70 mb-0.5 font-medium">You (owner)</p>
-                                                    )}
+                                                    <p className="text-xs opacity-70 mb-0.5 font-semibold">
+                                                        {isOwner ? 'You (owner)' : isUser ? 'Customer' : 'AI'}
+                                                    </p>
                                                     {text}
                                                 </div>
                                             </div>

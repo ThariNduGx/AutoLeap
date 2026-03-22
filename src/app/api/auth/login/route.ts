@@ -27,15 +27,18 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { email, password } = body;
+    const { email: rawEmail, password } = body;
 
     // Validate input
-    if (!email || !password) {
+    if (!rawEmail || !password) {
       return NextResponse.json(
         { error: "Email and password are required" },
         { status: 400 }
       );
     }
+
+    // Normalize email to lowercase so login is case-insensitive
+    const email = String(rawEmail).toLowerCase().trim();
 
     // Get Supabase client
     const supabase = getSupabaseClient();
@@ -43,7 +46,7 @@ export async function POST(request: NextRequest) {
     // Find user by email
     const { data: user, error: queryError } = (await supabase
       .from("users")
-      .select("*")
+      .select("id, email, password_hash, name, role, business_id, created_at, updated_at")
       .eq("email", email)
       .single()) as { data: User | null; error: any };
 

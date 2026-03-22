@@ -1,8 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { storeFAQ } from '@/lib/infrastructure/embeddings';
 import { getSession, hasRole } from '@/lib/auth/session';
+import { rateLimit } from '@/lib/infrastructure/rate-limit';
 
 export const dynamic = 'force-dynamic';
+
+// Process this many rows in parallel to avoid sequential embedding API calls
+// timing out the Edge runtime (25s limit).
+const BATCH_SIZE = 5;
 
 /**
  * POST /api/faqs/bulk
@@ -14,6 +19,12 @@ export const dynamic = 'force-dynamic';
  * SECURITY: Business ID comes from session, NOT from request.
  */
 export async function POST(req: NextRequest) {
+  // 3 bulk imports per minute per IP — each import can be hundreds of rows
+  const rl = await rateLimit(req, 'api/faqs/bulk', { limit: 3, windowSeconds: 60 });
+  if (!rl.allowed) {
+    return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
+  }
+
   const session = await getSession(req);
 
   if (!session || !hasRole(session, 'business')) {
@@ -62,26 +73,39 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Pre-validate all rows, collecting valid ones for processing
+    type ValidRow = { lineNum: number; question: string; answer: string; category: string };
     let imported = 0;
     const errors: string[] = [];
+    const validRows: ValidRow[] = [];
 
     for (let i = 1; i < lines.length; i++) {
       const cols = parseCSVRow(lines[i]);
       const question = cols[qIdx]?.trim();
       const answer = cols[aIdx]?.trim();
-      const category = cIdx !== -1 ? cols[cIdx]?.trim() : 'general';
+      const category = (cIdx !== -1 ? cols[cIdx]?.trim() : '') || 'general';
 
       if (!question || !answer) {
         errors.push(`Row ${i + 1}: missing question or answer — skipped`);
         continue;
       }
+      validRows.push({ lineNum: i + 1, question, answer, category });
+    }
 
-      const ok = await storeFAQ(businessId, question, answer, category || 'general');
-      if (ok) {
-        imported++;
-      } else {
-        errors.push(`Row ${i + 1}: failed to store — skipped`);
-      }
+    // Process in parallel batches to stay within Edge runtime timeout.
+    // 5 concurrent embedding API calls × ~500ms ≈ 0.5s per batch.
+    for (let i = 0; i < validRows.length; i += BATCH_SIZE) {
+      const batch = validRows.slice(i, i + BATCH_SIZE);
+      const results = await Promise.all(
+        batch.map(r => storeFAQ(businessId, r.question, r.answer, r.category))
+      );
+      results.forEach((ok, j) => {
+        if (ok) {
+          imported++;
+        } else {
+          errors.push(`Row ${batch[j].lineNum}: failed to store — skipped`);
+        }
+      });
     }
 
     return NextResponse.json({

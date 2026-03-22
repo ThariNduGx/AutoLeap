@@ -107,7 +107,8 @@ export async function PATCH(req: NextRequest) {
                 if (cust) {
                     await (supabase.from('customers') as any)
                         .update({ noshow_count: (cust.noshow_count ?? 0) + 1 })
-                        .eq('id', cust.id);
+                        .eq('id', cust.id)
+                        .eq('business_id', session.businessId);
                 }
             }
         } catch { /* non-fatal */ }

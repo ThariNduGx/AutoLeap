@@ -37,6 +37,13 @@ export async function GET(req: NextRequest) {
 
     const supabase = getSupabaseClient();
 
+    // Safety caps: all three high-volume tables are scoped to one business + time
+    // window, but a busy business could still produce tens-of-thousands of rows.
+    // Pulling unlimited rows into Node.js memory for in-memory aggregation would
+    // cause serverless memory spikes. 10 000 rows per table is sufficient to
+    // produce accurate aggregations for any realistic business over 90 days.
+    const ROW_CAP = 10_000;
+
     const [
         attemptsRes,
         conversationsRes,
@@ -49,20 +56,23 @@ export async function GET(req: NextRequest) {
             .select('success, failure_reason, turns_taken, created_at, platform')
             .eq('business_id', businessId)
             .gte('created_at', since)
-            .order('created_at', { ascending: true }),
+            .order('created_at', { ascending: true })
+            .limit(ROW_CAP),
 
         // Conversations for intent breakdown
         (supabase.from('conversations') as any)
             .select('intent, status, created_at')
             .eq('business_id', businessId)
-            .gte('created_at', since),
+            .gte('created_at', since)
+            .limit(ROW_CAP),
 
         // Appointments for peak hours, daily trend, and revenue
         (supabase.from('appointments') as any)
             .select('appointment_date, appointment_time, status, platform, service_type, price, currency, created_at')
             .eq('business_id', businessId)
             .gte('created_at', since)
-            .order('appointment_date', { ascending: true }),
+            .order('appointment_date', { ascending: true })
+            .limit(ROW_CAP),
 
         // Top FAQs by hit count
         (supabase.from('faq_documents') as any)
@@ -76,7 +86,8 @@ export async function GET(req: NextRequest) {
         (supabase.from('reviews') as any)
             .select('rating, created_at')
             .eq('business_id', businessId)
-            .gte('created_at', since),
+            .gte('created_at', since)
+            .limit(ROW_CAP),
     ]);
 
     const attempts: any[] = attemptsRes.data || [];
@@ -135,17 +146,17 @@ export async function GET(req: NextRequest) {
     }));
 
     // ── Daily Bookings Trend ────────────────────────────────
-    const dailyMap: Record<string, { scheduled: number; cancelled: number; completed: number; revenue: number }> = {};
+    const dailyMap: Record<string, { scheduled: number; cancelled: number; completed: number; no_show: number; revenue: number }> = {};
     appointments.forEach(a => {
         const date = a.appointment_date;
         if (!date) return;
-        if (!dailyMap[date]) dailyMap[date] = { scheduled: 0, cancelled: 0, completed: 0, revenue: 0 };
+        if (!dailyMap[date]) dailyMap[date] = { scheduled: 0, cancelled: 0, completed: 0, no_show: 0, revenue: 0 };
         const status = a.status || 'scheduled';
         if (status in dailyMap[date]) {
             (dailyMap[date] as any)[status]++;
         }
-        // Count revenue for scheduled + completed appointments
-        if ((status === 'scheduled' || status === 'completed') && a.price != null) {
+        // Count revenue only for completed appointments (service delivered)
+        if (status === 'completed' && a.price != null) {
             dailyMap[date].revenue += Number(a.price);
         }
     });
@@ -154,9 +165,10 @@ export async function GET(req: NextRequest) {
         .map(([date, counts]) => ({ date, ...counts }));
 
     // ── Revenue ─────────────────────────────────────────────
-    // Only count scheduled + completed appointments that have a price recorded
+    // Only count completed appointments — scheduled appointments haven't been
+    // delivered yet and could still be cancelled or result in a no-show.
     const revenueAppts = appointments.filter(
-        a => (a.status === 'scheduled' || a.status === 'completed') && a.price != null
+        a => a.status === 'completed' && a.price != null
     );
     const totalRevenue = revenueAppts.reduce((s: number, a: any) => s + Number(a.price), 0);
 

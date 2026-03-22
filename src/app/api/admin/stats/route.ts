@@ -76,13 +76,13 @@ export async function GET(request: NextRequest) {
 
         const { data: budgetData } = await (supabase
             .from('budgets') as any)
-            .select('business_id, monthly_limit_usd, current_usage_usd');
+            .select('business_id, monthly_budget_usd, current_usage_usd');
 
         const budgetMap = new Map<string, { limit: number; used: number }>();
         for (const b of (budgetData || [])) {
-            if (b.monthly_limit_usd > 0) {
+            if (b.monthly_budget_usd > 0) {
                 budgetMap.set(b.business_id, {
-                    limit: b.monthly_limit_usd,
+                    limit: b.monthly_budget_usd,
                     used: b.current_usage_usd || 0,
                 });
             }
