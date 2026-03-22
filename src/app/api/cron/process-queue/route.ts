@@ -14,18 +14,12 @@ export const dynamic = 'force-dynamic';
 export async function GET(req: Request) {
   try {
     // 1. Verify this is a legitimate cron request
-    const { searchParams } = new URL(req.url);
-    const authHeader = req.headers.get('authorization');
-    const queryKey = searchParams.get('key');
+    // Auth via header only — query-param key is not supported (would expose secret in logs)
     const cronSecret = process.env.CRON_SECRET;
     if (!cronSecret) {
       return new NextResponse('Server misconfiguration: CRON_SECRET not set', { status: 500 });
     }
-
-    const isValidHeader = authHeader === `Bearer ${cronSecret}`;
-    const isValidQuery = queryKey === cronSecret;
-
-    if (!isValidHeader && !isValidQuery) {
+    if (req.headers.get('authorization') !== `Bearer ${cronSecret}`) {
       console.warn('[CRON] Unauthorized request');
       return new NextResponse('Unauthorized', { status: 401 });
     }

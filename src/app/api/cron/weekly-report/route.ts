@@ -11,16 +11,12 @@ export const dynamic = 'force-dynamic';
  *   { "path": "/api/cron/weekly-report", "schedule": "0 8 * * 1" }
  */
 export async function GET(req: Request) {
-  // Auth
-  const { searchParams } = new URL(req.url);
+  // Auth — header only; query-param key is intentionally not supported (would log secret)
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret) return new NextResponse('CRON_SECRET not set', { status: 500 });
-
-  const isValid =
-    req.headers.get('authorization') === `Bearer ${cronSecret}` ||
-    searchParams.get('key') === cronSecret;
-
-  if (!isValid) return new NextResponse('Unauthorized', { status: 401 });
+  if (req.headers.get('authorization') !== `Bearer ${cronSecret}`) {
+    return new NextResponse('Unauthorized', { status: 401 });
+  }
 
   const supabase = getSupabaseClient();
 
@@ -51,18 +47,20 @@ export async function GET(req: Request) {
     try {
       // Run all queries in parallel for this business
       const [bookingsRes, cancellationsRes, conversationsRes, faqsRes, costRes] = await Promise.all([
-        // New bookings this week
+        // New bookings this week — exclude cancelled so they aren't double-counted
         (supabase.from('appointments') as any)
           .select('id', { count: 'exact', head: true })
           .eq('business_id', biz.id)
-          .gte('created_at', weekAgoStr),
+          .gte('created_at', weekAgoStr)
+          .neq('status', 'cancelled'),
 
-        // Cancellations this week
+        // Cancellations this week — filter by updated_at so appointments cancelled
+        // this week (regardless of when they were created) are counted correctly
         (supabase.from('appointments') as any)
           .select('id', { count: 'exact', head: true })
           .eq('business_id', biz.id)
           .eq('status', 'cancelled')
-          .gte('created_at', weekAgoStr),
+          .gte('updated_at', weekAgoStr),
 
         // Conversations this week
         (supabase.from('conversations') as any)

@@ -12,26 +12,26 @@ export const dynamic = 'force-dynamic';
  *
  * reminder_hours: JSONB array on businesses table, e.g. [48, 24, 2, 1].
  * reminders_sent: JSONB map on appointments, e.g. { "48": true, "24": false }.
+ *
+ * Quiet hours: no messages are sent between 21:00–08:00 in the business's local timezone.
  */
 
 export async function GET(req: Request) {
   try {
-    const { searchParams } = new URL(req.url);
     const cronSecret = process.env.CRON_SECRET;
     if (!cronSecret) return new NextResponse('CRON_SECRET not set', { status: 500 });
-
-    const isValid =
-      req.headers.get('authorization') === `Bearer ${cronSecret}` ||
-      searchParams.get('key') === cronSecret;
-    if (!isValid) return new NextResponse('Unauthorized', { status: 401 });
+    if (req.headers.get('authorization') !== `Bearer ${cronSecret}`) {
+      return new NextResponse('Unauthorized', { status: 401 });
+    }
 
     console.log('[REMINDERS] Starting reminder + review check...');
     const supabase = getSupabaseClient();
 
-    // Fetch all businesses that have at least one messaging channel configured
+    // Fetch all active businesses that have at least one messaging channel configured
     const { data: businesses } = await (supabase.from('businesses') as any)
       .select('id, name, telegram_bot_token, fb_page_access_token, timezone, reminder_hours')
-      .or('telegram_bot_token.not.is.null,fb_page_access_token.not.is.null');
+      .or('telegram_bot_token.not.is.null,fb_page_access_token.not.is.null')
+      .eq('is_active', true);
 
     if (!businesses?.length) return NextResponse.json({ success: true, sent: 0 });
 
@@ -42,6 +42,10 @@ export async function GET(req: Request) {
       const reminderHours: number[] = Array.isArray(biz.reminder_hours) ? biz.reminder_hours : [24, 1];
 
       const nowLocal = new Date(new Date().toLocaleString('en-US', { timeZone: tz }));
+
+      // Quiet hours: skip all messaging between 21:00 and 08:00 local time
+      const localHour = nowLocal.getHours();
+      if (localHour < 8 || localHour >= 21) continue;
 
       // ── Appointment reminders ────────────────────────────────────────────────
       // Fetch all scheduled appointments in a +48h window (covers any custom reminder schedule)
@@ -148,6 +152,14 @@ export async function POST(req: Request) { return GET(req); }
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Escape Telegram Markdown v1 special characters in customer-supplied strings.
+ * Unescaped *, _, or ` in names/service types cause Telegram to reject the message.
+ */
+function escapeMd(s: string): string {
+  return s.replace(/[*_`]/g, '\\$&');
+}
+
 async function sendReminderToCustomer(
   botToken: string | null,
   fbPageToken: string | null,
@@ -174,15 +186,15 @@ async function sendReminderToCustomer(
     ]);
   }
 
-  // Default: Telegram
+  // Default: Telegram — escape customer-supplied strings to prevent Markdown parse errors
   if (!botToken) return false;
   const mdText =
     `⏰ *Appointment Reminder*\n\n` +
-    `Hi ${appt.customer_name}! Your appointment is in *${timeUntil}*.\n\n` +
-    `📋 *${appt.service_type}*\n` +
+    `Hi ${escapeMd(appt.customer_name)}! Your appointment is in *${timeUntil}*.\n\n` +
+    `📋 *${escapeMd(appt.service_type)}*\n` +
     `📅 ${appt.appointment_date}\n` +
     `🕐 ${appt.appointment_time}\n\n` +
-    `📍 *${businessName}*\n\nPlease confirm or cancel below.`;
+    `📍 *${escapeMd(businessName)}*\n\nPlease confirm or cancel below.`;
 
   return sendTelegramMessage(botToken, appt.customer_chat_id, mdText, {
     inline_keyboard: [[
@@ -218,11 +230,11 @@ async function sendReviewRequest(
     ]);
   }
 
-  // Default: Telegram
+  // Default: Telegram — escape customer-supplied strings
   if (!botToken) return false;
   const mdText =
     `⭐ *How was your experience?*\n\n` +
-    `Hi ${appt.customer_name}! We hope you enjoyed your *${appt.service_type}* at ${businessName}.\n` +
+    `Hi ${escapeMd(appt.customer_name)}! We hope you enjoyed your *${escapeMd(appt.service_type)}* at ${escapeMd(businessName)}.\n` +
     `We'd love your feedback — please rate your experience:`;
 
   return sendTelegramMessage(botToken, appt.customer_chat_id, mdText, {
