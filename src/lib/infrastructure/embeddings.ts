@@ -51,21 +51,50 @@ export async function storeFAQ(
   const supabase = getSupabaseClient();
 
   try {
-    // 1. Store FAQ document
-    const { data: faqDoc, error: faqError } = await (supabase
+    // 1. Store FAQ document — upsert to prevent duplicates.
+    //    If a FAQ with the same question (case-insensitive) already exists for
+    //    this business, update its answer instead of inserting a second row.
+    //    This keeps re-imported CSVs idempotent and prevents the vector store
+    //    from filling with duplicate embeddings.
+    const { data: existingFaq } = await (supabase
       .from('faq_documents') as any)
-      .insert({
-        business_id: businessId,
-        question,
-        answer,
-        category,
-      })
-      .select()
-      .single();
+      .select('id')
+      .eq('business_id', businessId)
+      .ilike('question', question)
+      .maybeSingle();
 
-    if (faqError || !faqDoc) {
-      console.error('[FAQ] Failed to store document:', faqError);
-      return false;
+    let faqDoc: any;
+
+    if (existingFaq) {
+      // Question already exists — update answer/category in place
+      const { data: updated, error: updateError } = await (supabase
+        .from('faq_documents') as any)
+        .update({ answer, category })
+        .eq('id', existingFaq.id)
+        .select()
+        .single();
+      if (updateError || !updated) {
+        console.error('[FAQ] Failed to update document:', updateError);
+        return false;
+      }
+      faqDoc = updated;
+      // Delete the stale embedding row so it gets regenerated below
+      await (supabase.from('faq_embeddings') as any)
+        .delete()
+        .eq('faq_id', faqDoc.id);
+      console.log('[FAQ] ♻️ Updated existing FAQ:', question.substring(0, 50));
+    } else {
+      // New question — insert fresh row
+      const { data: inserted, error: insertError } = await (supabase
+        .from('faq_documents') as any)
+        .insert({ business_id: businessId, question, answer, category })
+        .select()
+        .single();
+      if (insertError || !inserted) {
+        console.error('[FAQ] Failed to store document:', insertError);
+        return false;
+      }
+      faqDoc = inserted;
     }
 
     // 2. Generate and store embedding (non-fatal — FAQ is usable without it)

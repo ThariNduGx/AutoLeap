@@ -706,9 +706,25 @@ async function handleFAQ(
     }
 
     if (relevantFAQs.length === 0 && !servicesPricingBlock) {
+      // No relevant context — escalate so the business owner is notified in the
+      // dashboard. Mirrors the pattern used in handleComplaint.
+      const supabase = getSupabaseClient();
+      await (supabase.from('conversations') as any)
+        .upsert(
+          {
+            business_id: businessId,
+            customer_chat_id: message.chatId,
+            intent: 'faq',
+            status: 'escalated',
+            state: {},
+            history: [],
+          },
+          { onConflict: 'business_id,customer_chat_id' }
+        );
+      console.log('[FAQ] ⚑ No match — conversation escalated for human follow-up');
       return {
         success: true,
-        response: "I don't have information about that. Let me connect you with a team member who can help.",
+        response: "I don't have information about that. I've flagged this for a team member who will follow up with you shortly.",
         costIncurred: 0,
       };
     }
@@ -719,15 +735,15 @@ async function handleFAQ(
 
     const prompt = `You are ${botName}, a helpful assistant for a service business. ${toneInstruction}
 ALWAYS respond in the same language the customer writes in (Sinhala, Tamil, English, or any other language).
-Answer the customer's question using the provided FAQs and/or services pricing information below.
 ${faqContext}${servicesPricingBlock}
 
 Customer Question: ${message.text}
 
-Instructions:
+CRITICAL RULES — follow exactly:
+- Answer ONLY using the FAQs and/or services listed above. Do not use any other knowledge.
+- If the answer is not present in the provided context, respond with exactly: "I don't have that information. Let me connect you with the team."
+- Do NOT guess, infer, or draw on general knowledge outside the context above.
 - If the customer asks about prices, list ALL relevant packages with their prices clearly.
-- Answer briefly and naturally.
-- If you cannot find the answer, say you don't have that information.
 - Keep response under 150 words.`;
 
     const response = await llm.chat.completions.create({
