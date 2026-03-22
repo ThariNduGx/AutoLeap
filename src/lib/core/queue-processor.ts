@@ -717,9 +717,13 @@ async function handleFAQ(
         }).join('\n');
     }
 
-    if (relevantFAQs.length === 0 && !servicesPricingBlock) {
-      // No relevant context — escalate so the business owner is notified in the
-      // dashboard. Mirrors the pattern used in handleComplaint.
+    if (relevantFAQs.length === 0) {
+      // No relevant FAQ found — escalate so the business owner is notified in the
+      // dashboard regardless of whether services are configured. Without this guard,
+      // any business with active services would never escalate through the FAQ handler,
+      // because servicesPricingBlock is non-empty whenever services exist. The AI
+      // prompt's CRITICAL RULES already handle pricing questions when FAQs are present;
+      // here we need to guarantee escalation on every FAQ miss.
       const supabase = getSupabaseClient();
       await (supabase.from('conversations') as any)
         .upsert(
