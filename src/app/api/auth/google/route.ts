@@ -27,9 +27,12 @@ export async function GET(req: NextRequest) {
         return new NextResponse('No business associated with this account', { status: 400 });
     }
 
-    // Generate a random nonce and store businessId under it for 10 minutes
+    // Generate a random nonce and store { businessId, from } under it for 10 minutes.
+    // `from` is an optional context hint passed by callers (e.g. 'onboarding') so the
+    // callback can redirect to the right page after the OAuth flow completes.
     const nonce = randomUUID();
-    await redis.set(`oauth:state:${nonce}`, businessId, { ex: 600 });
+    const from = req.nextUrl.searchParams.get('from');
+    await redis.set(`oauth:state:${nonce}`, JSON.stringify({ businessId, from }), { ex: 600 });
 
     const oauth2Client = new OAuth2Client(
         process.env.GOOGLE_CLIENT_ID,
