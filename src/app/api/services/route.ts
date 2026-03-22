@@ -1,32 +1,36 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { getSupabaseClient } from '@/lib/infrastructure/supabase';
 import { getSession, hasRole } from '@/lib/auth/session';
 
 export const dynamic = 'force-dynamic';
 
-/**
- * Tier shape: { name: string, price: number, currency?: string, duration_minutes?: number }
- */
-interface Tier {
-  name: string;
-  price: number;
-  currency?: string;
-  duration_minutes?: number;
-}
+// ─── Zod schemas ──────────────────────────────────────────────────────────────
 
-function validateTiers(raw: unknown): Tier[] | null {
-  if (!Array.isArray(raw)) return null;
-  for (const t of raw) {
-    if (typeof t !== 'object' || !t) return null;
-    if (typeof (t as any).name !== 'string' || !(t as any).name.trim()) return null;
-    if (typeof (t as any).price !== 'number' || (t as any).price < 0) return null;
-    if ((t as any).duration_minutes !== undefined) {
-      const d = (t as any).duration_minutes;
-      if (typeof d !== 'number' || d < 5 || d > 480) return null;
-    }
-  }
-  return raw as Tier[];
-}
+const VALID_CURRENCIES = ['LKR', 'USD', 'EUR', 'GBP', 'AED', 'SGD', 'INR', 'AUD'] as const;
+
+const TierSchema = z.object({
+  name: z.string().min(1, 'Tier name is required').max(80),
+  price: z.number({ invalid_type_error: 'Tier price must be a number' }).min(0).max(1_000_000),
+  currency: z.string().optional(),
+  duration_minutes: z.number().int().min(5).max(480).optional(),
+});
+
+const ServiceCreateSchema = z.object({
+  name: z.string().min(1, 'Service name is required').max(100),
+  description: z.string().max(300).optional(),
+  duration_minutes: z.coerce.number({ invalid_type_error: 'duration_minutes must be a number' }).int().min(5, 'duration_minutes must be at least 5').max(480, 'duration_minutes must be at most 480'),
+  buffer_minutes: z.coerce.number().int().min(0).max(120).optional().default(0),
+  min_advance_hours: z.coerce.number().int().min(0).max(168).optional().default(0),
+  price: z.number().min(0).max(1_000_000).nullable().optional(),
+  currency: z.enum(VALID_CURRENCIES, { error: `currency must be one of: ${VALID_CURRENCIES.join(', ')}` }).optional().default('LKR'),
+  tiers: z.array(TierSchema).optional().default([]),
+});
+
+// For PATCH every field is optional — only the supplied fields are updated
+const ServicePatchSchema = ServiceCreateSchema.partial();
+
+// ─── Route handlers ───────────────────────────────────────────────────────────
 
 /**
  * GET /api/services
@@ -34,13 +38,14 @@ function validateTiers(raw: unknown): Tier[] | null {
  *
  * POST /api/services
  * Create a new service.
- * Body: { name, description?, duration_minutes, price?, currency?, tiers? }
+ * Body: { name, description?, duration_minutes, price?, currency?, tiers?,
+ *         buffer_minutes?, min_advance_hours? }
  *
  * PATCH /api/services?id=UUID
- * Update a service (any combination of its fields + tiers).
+ * Update a service (any subset of its fields + tiers).
  *
  * DELETE /api/services?id=UUID
- * Delete a service.
+ * Soft-delete if appointments exist; hard-delete otherwise.
  */
 
 export async function GET(req: NextRequest) {
@@ -68,44 +73,25 @@ export async function POST(req: NextRequest) {
   }
 
   const body = await req.json();
-  const name = (body.name || '').trim();
-  if (!name) return NextResponse.json({ error: 'name is required' }, { status: 400 });
-
-  const duration = parseInt(body.duration_minutes) || 60;
-  if (duration < 5 || duration > 480) {
-    return NextResponse.json({ error: 'duration_minutes must be between 5 and 480' }, { status: 400 });
+  const parsed = ServiceCreateSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
   }
 
-  // Validate tiers if provided
-  let tiers: Tier[] = [];
-  if (body.tiers !== undefined) {
-    const validated = validateTiers(body.tiers);
-    if (validated === null) {
-      return NextResponse.json(
-        { error: 'Invalid tiers format. Each tier needs: name (string), price (number ≥ 0), optional duration_minutes (5–480).' },
-        { status: 400 }
-      );
-    }
-    tiers = validated;
-  }
-
-  const price = body.price != null && body.price !== '' ? parseFloat(body.price) : null;
+  const { name, description, duration_minutes, buffer_minutes, min_advance_hours, price, currency, tiers } = parsed.data;
 
   const supabase = getSupabaseClient();
-  const bufferMinutes = Math.max(0, parseInt(body.buffer_minutes) || 0);
-  const minAdvanceHours = Math.max(0, parseInt(body.min_advance_hours) || 0);
-
   const { data, error } = await (supabase
     .from('services') as any)
     .insert({
       business_id: session.businessId,
-      name,
-      description: (body.description || '').trim() || null,
-      duration_minutes: duration,
-      buffer_minutes: bufferMinutes,
-      min_advance_hours: minAdvanceHours,
-      price: price != null && !isNaN(price) ? price : null,
-      currency: (body.currency || 'LKR').toUpperCase(),
+      name: name.trim(),
+      description: description?.trim() || null,
+      duration_minutes,
+      buffer_minutes,
+      min_advance_hours,
+      price: price ?? null,
+      currency,
       tiers,
     })
     .select()
@@ -126,27 +112,19 @@ export async function PATCH(req: NextRequest) {
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
 
   const body = await req.json();
-  const scalar = ['name', 'description', 'duration_minutes', 'buffer_minutes', 'min_advance_hours', 'price', 'currency', 'is_active', 'sort_order'] as const;
-  const updates: Record<string, unknown> = {};
-  for (const key of scalar) {
-    if (key in body) updates[key] = body[key];
+  const parsed = ServicePatchSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
   }
 
-  // Handle tiers separately (needs validation)
-  if ('tiers' in body) {
-    const validated = validateTiers(body.tiers);
-    if (validated === null) {
-      return NextResponse.json(
-        { error: 'Invalid tiers format. Each tier needs: name (string), price (number ≥ 0), optional duration_minutes (5–480).' },
-        { status: 400 }
-      );
-    }
-    updates.tiers = validated;
-  }
-
+  const updates = parsed.data as Record<string, unknown>;
   if (Object.keys(updates).length === 0) {
-    return NextResponse.json({ error: 'No valid fields' }, { status: 400 });
+    return NextResponse.json({ error: 'No valid fields to update' }, { status: 400 });
   }
+
+  // Trim name if present
+  if (typeof updates.name === 'string') updates.name = (updates.name as string).trim();
+  if (typeof updates.description === 'string') updates.description = (updates.description as string).trim() || null;
 
   const supabase = getSupabaseClient();
   const { data, error } = await (supabase
@@ -172,6 +150,37 @@ export async function DELETE(req: NextRequest) {
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
 
   const supabase = getSupabaseClient();
+
+  // Fetch the service first to get its name (used to match service_type in appointments)
+  const { data: svc } = await (supabase
+    .from('services') as any)
+    .select('name')
+    .eq('id', id)
+    .eq('business_id', session.businessId)
+    .maybeSingle();
+
+  if (!svc) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+
+  // Guard: count appointments referencing this service by name (no FK — service_type is text)
+  const { count } = await (supabase
+    .from('appointments') as any)
+    .select('id', { count: 'exact', head: true })
+    .eq('business_id', session.businessId)
+    .eq('service_type', svc.name);
+
+  if (count && count > 0) {
+    // Soft-delete: deactivate so the service is hidden but historical data stays intact
+    const { error: updateErr } = await (supabase
+      .from('services') as any)
+      .update({ is_active: false })
+      .eq('id', id)
+      .eq('business_id', session.businessId);
+
+    if (updateErr) return NextResponse.json({ error: 'Failed to deactivate service' }, { status: 500 });
+    return NextResponse.json({ softDeleted: true, appointmentCount: count });
+  }
+
+  // No linked appointments — safe to hard-delete
   const { error } = await (supabase
     .from('services') as any)
     .delete()

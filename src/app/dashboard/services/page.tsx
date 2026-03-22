@@ -198,7 +198,13 @@ export default function ServicesPage() {
 
     async function handleDelete(svc: Service) {
         if (!confirm(`Delete "${svc.name}"? This cannot be undone.`)) return;
-        await fetch(`/api/services?id=${svc.id}`, { method: 'DELETE' });
+        const res = await fetch(`/api/services?id=${svc.id}`, { method: 'DELETE' });
+        if (res.ok) {
+            const data = await res.json();
+            if (data.softDeleted) {
+                alert(`"${svc.name}" has ${data.appointmentCount} existing appointment(s) and was deactivated instead of deleted. You can reactivate it using the toggle.`);
+            }
+        }
         await fetchServices();
     }
 
