@@ -9,19 +9,14 @@
 -- =============================================================================
 
 -- 1. Add idempotency key column (nullable for backward-compat + Messenger rows)
-ALTER TABLE IF EXISTS public.request_queue
+ALTER TABLE public.request_queue
     ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
 
 -- 2. Partial unique index: enforce uniqueness only where the key is present.
 --    This allows NULL for Messenger/other rows while deduplicating Telegram ones.
-DO $$
-BEGIN
-  IF to_regclass('public.request_queue') IS NOT NULL THEN
-    EXECUTE 'CREATE UNIQUE INDEX IF NOT EXISTS idx_request_queue_idempotency_key
-      ON public.request_queue (idempotency_key)
-      WHERE idempotency_key IS NOT NULL';
-  END IF;
-END $$;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_request_queue_idempotency_key
+    ON public.request_queue (idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
 
 -- 3. Index for fast pending lookup (already exists but document it here)
 --    idx_request_queue_status already created in earlier migrations.

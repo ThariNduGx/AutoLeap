@@ -27,8 +27,7 @@ CREATE INDEX IF NOT EXISTS idx_budgets_business_id ON public.budgets (business_i
 ALTER TABLE public.budgets ENABLE ROW LEVEL SECURITY;
 
 -- Service-role key bypasses RLS; these policies cover anon/authenticated reads
-DROP POLICY IF EXISTS "budgets_service_role_all" ON public.budgets;
-CREATE POLICY "budgets_service_role_all" ON public.budgets
+CREATE POLICY IF NOT EXISTS "budgets_service_role_all" ON public.budgets
     FOR ALL USING (true);
 
 -- ─────────────────────────────────────────────
@@ -50,8 +49,7 @@ CREATE INDEX IF NOT EXISTS idx_cost_logs_business_created
 
 ALTER TABLE public.cost_logs ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS "cost_logs_service_role_all" ON public.cost_logs;
-CREATE POLICY "cost_logs_service_role_all" ON public.cost_logs
+CREATE POLICY IF NOT EXISTS "cost_logs_service_role_all" ON public.cost_logs
     FOR ALL USING (true);
 
 -- ─────────────────────────────────────────────

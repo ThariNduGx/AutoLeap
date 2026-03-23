@@ -65,31 +65,16 @@ CREATE POLICY "business_own_costs"
 -- ─────────────────────────────────────────────
 
 -- Queue: cron polls pending items ordered by created_at
-DO $$
-BEGIN
-  IF to_regclass('public.request_queue') IS NOT NULL THEN
-    EXECUTE 'CREATE INDEX IF NOT EXISTS idx_request_queue_status_created
-      ON public.request_queue(status, created_at ASC)';
-  END IF;
-END $$;
+CREATE INDEX IF NOT EXISTS idx_request_queue_status_created
+  ON request_queue(status, created_at ASC);
 
 -- Queue: business-scoped lookups
-DO $$
-BEGIN
-  IF to_regclass('public.request_queue') IS NOT NULL THEN
-    EXECUTE 'CREATE INDEX IF NOT EXISTS idx_request_queue_business_status
-      ON public.request_queue(business_id, status)';
-  END IF;
-END $$;
+CREATE INDEX IF NOT EXISTS idx_request_queue_business_status
+  ON request_queue(business_id, status);
 
 -- Conversations: active session lookup (business + customer + expiry)
-DO $$
-BEGIN
-  IF to_regclass('public.conversations') IS NOT NULL THEN
-    EXECUTE 'CREATE INDEX IF NOT EXISTS idx_conversations_active
-      ON public.conversations(business_id, customer_chat_id, expires_at)';
-  END IF;
-END $$;
+CREATE INDEX IF NOT EXISTS idx_conversations_active
+  ON conversations(business_id, customer_chat_id, expires_at);
 
 -- Appointments: customer chat ID lookup (for status handler)
 CREATE INDEX IF NOT EXISTS idx_appointments_chat_id

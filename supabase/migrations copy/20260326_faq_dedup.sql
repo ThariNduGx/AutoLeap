@@ -18,41 +18,24 @@
 -- The CASCADE on faq_embeddings_faq_id_fkey (added in 20260325) means
 -- the corresponding faq_embeddings rows are also deleted automatically.
 -- ─────────────────────────────────────────────
-DO $$
-BEGIN
-  IF to_regclass('public.faq_documents') IS NOT NULL THEN
-    EXECUTE $sql$
-      DELETE FROM public.faq_documents d_old
-      USING public.faq_documents d_new
-      WHERE d_old.business_id = d_new.business_id
-        AND lower(d_old.question) = lower(d_new.question)
-        AND d_old.created_at < d_new.created_at
-    $sql$;
-  END IF;
-END $$;
+DELETE FROM faq_documents d_old
+  USING faq_documents d_new
+WHERE d_old.business_id = d_new.business_id
+  AND lower(d_old.question) = lower(d_new.question)
+  AND d_old.created_at     <  d_new.created_at;
 
 -- ─────────────────────────────────────────────
 -- 2. GENERATED COLUMN
 -- Stored so it can be indexed and referenced by Supabase upsert onConflict.
 -- ─────────────────────────────────────────────
-DO $$
-BEGIN
-  IF to_regclass('public.faq_documents') IS NOT NULL THEN
-    EXECUTE 'ALTER TABLE public.faq_documents
-      ADD COLUMN IF NOT EXISTS question_lower TEXT
-      GENERATED ALWAYS AS (lower(question)) STORED';
-  END IF;
-END $$;
+ALTER TABLE faq_documents
+  ADD COLUMN IF NOT EXISTS question_lower TEXT
+    GENERATED ALWAYS AS (lower(question)) STORED;
 
 -- ─────────────────────────────────────────────
 -- 3. UNIQUE INDEX
 -- Prevents future duplicates at the DB level regardless of how the row is
 -- inserted (storeFAQ, bulk import, direct SQL, etc.).
 -- ─────────────────────────────────────────────
-DO $$
-BEGIN
-  IF to_regclass('public.faq_documents') IS NOT NULL THEN
-    EXECUTE 'CREATE UNIQUE INDEX IF NOT EXISTS idx_faq_documents_uniq_question
-      ON public.faq_documents (business_id, question_lower)';
-  END IF;
-END $$;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_faq_documents_uniq_question
+  ON faq_documents (business_id, question_lower);

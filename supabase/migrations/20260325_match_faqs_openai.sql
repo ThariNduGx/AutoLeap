@@ -17,18 +17,25 @@ RETURNS TABLE (
 )
 LANGUAGE plpgsql AS $$
 BEGIN
-  RETURN QUERY
-  SELECT
-    d.id,
-    d.question,
-    d.answer,
-    1 - (e.embedding <=> query_embedding) AS similarity
-  FROM faq_documents d
-  JOIN faq_embeddings e ON d.id = e.faq_id
-  WHERE d.business_id = p_business_id
-    AND 1 - (e.embedding <=> query_embedding) > match_threshold
-  ORDER BY similarity DESC
-  LIMIT match_count;
+  IF to_regclass('public.faq_documents') IS NULL
+     OR to_regclass('public.faq_embeddings') IS NULL THEN
+    RETURN;
+  END IF;
+
+  RETURN QUERY EXECUTE $sql$
+    SELECT
+      d.id,
+      d.question,
+      d.answer,
+      1 - (e.embedding <=> $1) AS similarity
+    FROM public.faq_documents d
+    JOIN public.faq_embeddings e ON d.id = e.faq_id
+    WHERE d.business_id = $2
+      AND 1 - (e.embedding <=> $1) > $3
+    ORDER BY similarity DESC
+    LIMIT $4
+  $sql$
+  USING query_embedding, p_business_id, match_threshold, match_count;
 END;
 $$;
 
@@ -36,9 +43,15 @@ $$;
 -- Without CASCADE, every FAQ deletion leaves an orphaned row in faq_embeddings.
 -- The INNER JOIN in match_faqs makes orphaned rows invisible to search, but they
 -- accumulate as dead vector storage.
-ALTER TABLE faq_embeddings
-  DROP CONSTRAINT IF EXISTS faq_embeddings_faq_id_fkey,
-  ADD  CONSTRAINT faq_embeddings_faq_id_fkey
-    FOREIGN KEY (faq_id)
-    REFERENCES faq_documents(id)
-    ON DELETE CASCADE;
+DO $$
+BEGIN
+  IF to_regclass('public.faq_embeddings') IS NOT NULL
+     AND to_regclass('public.faq_documents') IS NOT NULL THEN
+    EXECUTE 'ALTER TABLE public.faq_embeddings
+      DROP CONSTRAINT IF EXISTS faq_embeddings_faq_id_fkey,
+      ADD CONSTRAINT faq_embeddings_faq_id_fkey
+      FOREIGN KEY (faq_id)
+      REFERENCES public.faq_documents(id)
+      ON DELETE CASCADE';
+  END IF;
+END $$;

@@ -1,0 +1,45 @@
+Connecting to remote database...
+Do you want to push these migrations to the remote database?
+ ΓÇó 002_create_users_table.sql
+ ΓÇó 20260112181500_create_appointments_table.sql
+ ΓÇó 20260112182500_create_business_costs.sql
+ ΓÇó 20260112194000_match_faqs_gemini.sql
+ ΓÇó 20260119_add_facebook_messenger_fields.sql
+ ΓÇó 20260119_add_user_roles_and_business_link.sql
+ ΓÇó 20260319_enhancements.sql
+ ΓÇó 20260319_security_and_perf.sql
+ ΓÇó 20260320_appointment_reminders.sql
+ ΓÇó 20260320_budgets_and_cost_logs.sql
+ ΓÇó 20260320_conversations_and_queue_fix.sql
+ ΓÇó 20260320_dead_letter_queue_and_budget_alerts.sql
+ ΓÇó 20260320_faq_hit_count.sql
+ ΓÇó 20260320_fix_appointment_status_default.sql
+ ΓÇó 20260320_timezone_email_cleanup.sql
+ ΓÇó 20260320_webhook_idempotency.sql
+ ΓÇó 20260321_rls_and_indexes_audit.sql
+ ΓÇó 20260321_waitlist_services_notes.sql
+ ΓÇó 20260322_service_tiers.sql
+ ΓÇó 20260322_workflow_improvements.sql
+ ΓÇó 20260323_platform_settings.sql
+ ΓÇó 20260324_reviews_unique_constraint.sql
+ ΓÇó 20260325_match_faqs_openai.sql
+ ΓÇó 20260326_budget_fixes.sql
+ ΓÇó 20260326_faq_dedup.sql
+ ΓÇó 20260327_rag_fixes.sql
+ ΓÇó 20260328_appointments_updated_at.sql
+
+ [Y/n] y
+Applying migration 002_create_users_table.sql...
+NOTICE (00000): drop cascades to constraint businesses_user_id_fkey on table businesses
+ERROR: insert or update on table "businesses" violates foreign key constraint "businesses_user_id_fkey" (SQLSTATE 23503)
+Key (user_id)=(520e1d02-a463-4148-a44c-0817ff7ecafe) is not present in table "users".                                   
+At statement: 5                                                                                                         
+-- Re-add the foreign key to businesses if businesses table exists                                                      
+DO $$ BEGIN                                                                                                             
+  ALTER TABLE public.businesses                                                                                         
+    ADD CONSTRAINT businesses_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE SET NULL;        
+EXCEPTION                                                                                                               
+  WHEN duplicate_object THEN null;                                                                                      
+  WHEN undefined_table THEN null;                                                                                       
+END $$                                                                                                                  
+Try rerunning the command with --debug to troubleshoot the error.

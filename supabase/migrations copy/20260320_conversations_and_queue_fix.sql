@@ -63,28 +63,21 @@ CREATE INDEX IF NOT EXISTS idx_conversations_business_recent
 -- Prevents duplicate processing when two cron runs overlap.
 -- Uses FOR UPDATE SKIP LOCKED — only one worker can claim each row.
 -- ─────────────────────────────────────────────
-DO $$
+CREATE OR REPLACE FUNCTION claim_queue_items(p_batch_size int DEFAULT 10)
+RETURNS SETOF request_queue
+LANGUAGE plpgsql AS $$
 BEGIN
-  IF to_regclass('public.request_queue') IS NOT NULL THEN
-    EXECUTE $fn$
-      CREATE OR REPLACE FUNCTION claim_queue_items(p_batch_size int DEFAULT 10)
-      RETURNS SETOF public.request_queue
-      LANGUAGE plpgsql AS $body$
-      BEGIN
-        RETURN QUERY
-          UPDATE public.request_queue
-          SET status = 'processing'
-          WHERE id IN (
-            SELECT id
-            FROM public.request_queue
-            WHERE status = 'pending'
-            ORDER BY created_at ASC
-            LIMIT p_batch_size
-            FOR UPDATE SKIP LOCKED
-          )
-          RETURNING *;
-      END;
-      $body$
-    $fn$;
-  END IF;
-END $$;
+  RETURN QUERY
+    UPDATE request_queue
+    SET status = 'processing'
+    WHERE id IN (
+      SELECT id
+      FROM   request_queue
+      WHERE  status = 'pending'
+      ORDER  BY created_at ASC
+      LIMIT  p_batch_size
+      FOR UPDATE SKIP LOCKED
+    )
+    RETURNING *;
+END;
+$$;

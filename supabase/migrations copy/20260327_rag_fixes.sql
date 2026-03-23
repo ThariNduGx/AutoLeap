@@ -10,10 +10,5 @@
 -- This migration only adds the embedding-side constraint.
 -- =============================================================================
 
-DO $$
-BEGIN
-  IF to_regclass('public.faq_embeddings') IS NOT NULL THEN
-    EXECUTE 'CREATE UNIQUE INDEX IF NOT EXISTS idx_faq_embeddings_faq_id
-      ON public.faq_embeddings (faq_id)';
-  END IF;
-END $$;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_faq_embeddings_faq_id
+    ON public.faq_embeddings (faq_id);

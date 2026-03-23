@@ -21,29 +21,24 @@ RETURNS TABLE (
 )
 LANGUAGE plpgsql AS $$
 BEGIN
-  IF to_regclass('public.faq_documents') IS NULL THEN
-    RETURN;
-  END IF;
-
-  RETURN QUERY EXECUTE $sql$
-    SELECT
-      d.id,
-      d.question,
-      d.answer,
-      0.5::float AS similarity
-    FROM public.faq_documents d
-    WHERE d.business_id = $1
-      AND (
-        d.question ILIKE '%' || $2 || '%'
-        OR d.answer ILIKE '%' || $2 || '%'
-      )
-    ORDER BY
-      CASE WHEN lower(d.question) = lower($2) THEN 0
-           WHEN d.question ILIKE '%' || $2 || '%' THEN 1
-           ELSE 2
-      END
-    LIMIT $3
-  $sql$
-  USING p_business_id, p_query, p_limit;
+  RETURN QUERY
+  SELECT
+    d.id,
+    d.question,
+    d.answer,
+    0.5::float AS similarity
+  FROM faq_documents d
+  WHERE d.business_id = p_business_id
+    AND (
+      d.question ILIKE '%' || p_query || '%'
+      OR d.answer ILIKE '%' || p_query || '%'
+    )
+  ORDER BY
+    -- Exact question match ranks highest
+    CASE WHEN lower(d.question) = lower(p_query) THEN 0
+         WHEN d.question ILIKE '%' || p_query || '%' THEN 1
+         ELSE 2
+    END
+  LIMIT p_limit;
 END;
 $$;

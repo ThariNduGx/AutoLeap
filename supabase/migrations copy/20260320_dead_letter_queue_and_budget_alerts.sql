@@ -8,59 +8,49 @@
 -- ─────────────────────────────────────────────
 
 -- retry_count: how many times this item has been attempted (0 = first try)
-ALTER TABLE IF EXISTS public.request_queue
+ALTER TABLE request_queue
   ADD COLUMN IF NOT EXISTS retry_count INT NOT NULL DEFAULT 0;
 
 -- retry_at: earliest time the item should be retried (NULL = ready immediately)
-ALTER TABLE IF EXISTS public.request_queue
+ALTER TABLE request_queue
   ADD COLUMN IF NOT EXISTS retry_at TIMESTAMPTZ;
 
 -- error_message: last failure reason, for debugging
-ALTER TABLE IF EXISTS public.request_queue
+ALTER TABLE request_queue
   ADD COLUMN IF NOT EXISTS error_message TEXT;
 
 -- Index to efficiently pick up retryable failed items
-DO $$
-BEGIN
-  IF to_regclass('public.request_queue') IS NOT NULL THEN
-    EXECUTE 'CREATE INDEX IF NOT EXISTS idx_request_queue_retry
-      ON public.request_queue(status, retry_at)
-      WHERE status = ''failed'' AND retry_at IS NOT NULL';
-  END IF;
-END $$;
+CREATE INDEX IF NOT EXISTS idx_request_queue_retry
+  ON request_queue(status, retry_at)
+  WHERE status = 'failed' AND retry_at IS NOT NULL;
 
 -- ─────────────────────────────────────────────
 -- 2. UPDATED claim_queue_items — also picks up retryable failed items
 -- Items are eligible for retry when: status='failed' AND retry_at <= now() AND retry_count < 3
 -- ─────────────────────────────────────────────
-DO $$
+CREATE OR REPLACE FUNCTION claim_queue_items(p_batch_size int DEFAULT 10)
+RETURNS SETOF request_queue
+LANGUAGE plpgsql AS $$
 BEGIN
-  IF to_regclass('public.request_queue') IS NOT NULL THEN
-    EXECUTE $fn$
-      CREATE OR REPLACE FUNCTION claim_queue_items(p_batch_size int DEFAULT 10)
-      RETURNS SETOF public.request_queue
-      LANGUAGE plpgsql AS $body$
-      BEGIN
-        RETURN QUERY
-          UPDATE public.request_queue
-          SET status = 'processing'
-          WHERE id IN (
-            SELECT id
-            FROM public.request_queue
-            WHERE
-              (status = 'pending')
-              OR
-              (status = 'failed' AND retry_count < 3 AND retry_at <= now())
-            ORDER BY created_at ASC
-            LIMIT p_batch_size
-            FOR UPDATE SKIP LOCKED
-          )
-          RETURNING *;
-      END;
-      $body$
-    $fn$;
-  END IF;
-END $$;
+  RETURN QUERY
+    UPDATE request_queue
+    SET status = 'processing'
+    WHERE id IN (
+      SELECT id
+      FROM   request_queue
+      WHERE
+        -- New pending items
+        (status = 'pending')
+        OR
+        -- Retryable failed items (max 3 retries, retry window elapsed)
+        (status = 'failed' AND retry_count < 3 AND retry_at <= now())
+      ORDER BY created_at ASC
+      LIMIT  p_batch_size
+      FOR UPDATE SKIP LOCKED
+    )
+    RETURNING *;
+END;
+$$;
 
 -- ─────────────────────────────────────────────
 -- 3. BUDGET ALERT TRACKING
@@ -83,16 +73,15 @@ LANGUAGE plpgsql AS $$
 DECLARE
   deleted_count INT;
 BEGIN
-  IF to_regclass('public.request_queue') IS NULL THEN
-    RETURN 0;
-  END IF;
-
-  DELETE FROM public.request_queue
+  DELETE FROM request_queue
   WHERE
+    -- Completed items older than 7 days
     (status = 'completed' AND created_at < now() - interval '7 days')
     OR
+    -- Dead-lettered items (exhausted retries) older than 7 days
     (status = 'failed' AND retry_count >= 3 AND created_at < now() - interval '7 days')
     OR
+    -- Stuck processing items older than 1 hour (presumed crashed)
     (status = 'processing' AND created_at < now() - interval '1 hour');
 
   GET DIAGNOSTICS deleted_count = ROW_COUNT;

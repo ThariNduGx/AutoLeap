@@ -24,8 +24,7 @@ CREATE INDEX IF NOT EXISTS idx_waitlist_business_service
     ON public.waitlist (business_id, service_type, created_at);
 
 ALTER TABLE public.waitlist ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "waitlist_service_role_all" ON public.waitlist;
-CREATE POLICY "waitlist_service_role_all" ON public.waitlist FOR ALL USING (true);
+CREATE POLICY IF NOT EXISTS "waitlist_service_role_all" ON public.waitlist FOR ALL USING (true);
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 2. SERVICES TABLE
@@ -48,8 +47,7 @@ CREATE INDEX IF NOT EXISTS idx_services_business_active
     ON public.services (business_id, is_active, sort_order);
 
 ALTER TABLE public.services ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "services_service_role_all" ON public.services;
-CREATE POLICY "services_service_role_all" ON public.services FOR ALL USING (true);
+CREATE POLICY IF NOT EXISTS "services_service_role_all" ON public.services FOR ALL USING (true);
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 3. CUSTOMER NOTES & TAGS ON CONVERSATIONS

@@ -62,20 +62,10 @@ DROP POLICY IF EXISTS "cost_logs_service_role_all" ON public.cost_logs;
 DROP POLICY IF EXISTS "service_role_conversations" ON public.conversations;
 
 -- waitlist — drop USING (true) blanket policy
-DO $$
-BEGIN
-  IF to_regclass('public.waitlist') IS NOT NULL THEN
-    EXECUTE 'DROP POLICY IF EXISTS "waitlist_service_role_all" ON public.waitlist';
-  END IF;
-END $$;
+DROP POLICY IF EXISTS "waitlist_service_role_all" ON public.waitlist;
 
 -- services — drop USING (true) blanket policy
-DO $$
-BEGIN
-  IF to_regclass('public.services') IS NOT NULL THEN
-    EXECUTE 'DROP POLICY IF EXISTS "services_service_role_all" ON public.services';
-  END IF;
-END $$;
+DROP POLICY IF EXISTS "services_service_role_all" ON public.services;
 
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -89,19 +79,19 @@ ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.businesses ENABLE ROW LEVEL SECURITY;
 
 -- business_blackouts — business-scoped data, no RLS before this migration
-ALTER TABLE IF EXISTS public.business_blackouts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.business_blackouts ENABLE ROW LEVEL SECURITY;
 
 -- customers — PII (names, phone numbers); must be locked down
-ALTER TABLE IF EXISTS public.customers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.customers ENABLE ROW LEVEL SECURITY;
 
 -- reviews — customer feedback, business-scoped
-ALTER TABLE IF EXISTS public.reviews ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.reviews ENABLE ROW LEVEL SECURITY;
 
 -- booking_attempts — internal metrics, business-scoped
 ALTER TABLE public.booking_attempts ENABLE ROW LEVEL SECURITY;
 
 -- platform_settings — admin-only config (budget defaults, announcements)
-ALTER TABLE IF EXISTS public.platform_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.platform_settings ENABLE ROW LEVEL SECURITY;
 
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -113,104 +103,60 @@ ALTER TABLE IF EXISTS public.platform_settings ENABLE ROW LEVEL SECURITY;
 -- ─────────────────────────────────────────────────────────────────────────────
 
 -- users: completely blocked for anon/authenticated
-DROP POLICY IF EXISTS "deny_direct_access" ON public.users;
 CREATE POLICY "deny_direct_access" ON public.users
     AS RESTRICTIVE FOR ALL TO anon, authenticated USING (false);
 
 -- businesses: completely blocked for anon/authenticated
-DROP POLICY IF EXISTS "deny_direct_access" ON public.businesses;
 CREATE POLICY "deny_direct_access" ON public.businesses
     AS RESTRICTIVE FOR ALL TO anon, authenticated USING (false);
 
 -- appointments
-DROP POLICY IF EXISTS "deny_direct_access" ON public.appointments;
 CREATE POLICY "deny_direct_access" ON public.appointments
     AS RESTRICTIVE FOR ALL TO anon, authenticated USING (false);
 
 -- business_costs
-DROP POLICY IF EXISTS "deny_direct_access" ON public.business_costs;
 CREATE POLICY "deny_direct_access" ON public.business_costs
     AS RESTRICTIVE FOR ALL TO anon, authenticated USING (false);
 
 -- budgets
-DROP POLICY IF EXISTS "deny_direct_access" ON public.budgets;
 CREATE POLICY "deny_direct_access" ON public.budgets
     AS RESTRICTIVE FOR ALL TO anon, authenticated USING (false);
 
 -- cost_logs
-DROP POLICY IF EXISTS "deny_direct_access" ON public.cost_logs;
 CREATE POLICY "deny_direct_access" ON public.cost_logs
     AS RESTRICTIVE FOR ALL TO anon, authenticated USING (false);
 
 -- conversations
-DROP POLICY IF EXISTS "deny_direct_access" ON public.conversations;
 CREATE POLICY "deny_direct_access" ON public.conversations
     AS RESTRICTIVE FOR ALL TO anon, authenticated USING (false);
 
 -- waitlist
-DO $$
-BEGIN
-  IF to_regclass('public.waitlist') IS NOT NULL THEN
-    EXECUTE 'DROP POLICY IF EXISTS "deny_direct_access" ON public.waitlist';
-    EXECUTE 'CREATE POLICY "deny_direct_access" ON public.waitlist
-      AS RESTRICTIVE FOR ALL TO anon, authenticated USING (false)';
-  END IF;
-END $$;
+CREATE POLICY "deny_direct_access" ON public.waitlist
+    AS RESTRICTIVE FOR ALL TO anon, authenticated USING (false);
 
 -- services
-DO $$
-BEGIN
-  IF to_regclass('public.services') IS NOT NULL THEN
-    EXECUTE 'DROP POLICY IF EXISTS "deny_direct_access" ON public.services';
-    EXECUTE 'CREATE POLICY "deny_direct_access" ON public.services
-      AS RESTRICTIVE FOR ALL TO anon, authenticated USING (false)';
-  END IF;
-END $$;
+CREATE POLICY "deny_direct_access" ON public.services
+    AS RESTRICTIVE FOR ALL TO anon, authenticated USING (false);
 
 -- business_blackouts
-DO $$
-BEGIN
-  IF to_regclass('public.business_blackouts') IS NOT NULL THEN
-    EXECUTE 'DROP POLICY IF EXISTS "deny_direct_access" ON public.business_blackouts';
-    EXECUTE 'CREATE POLICY "deny_direct_access" ON public.business_blackouts
-      AS RESTRICTIVE FOR ALL TO anon, authenticated USING (false)';
-  END IF;
-END $$;
+CREATE POLICY "deny_direct_access" ON public.business_blackouts
+    AS RESTRICTIVE FOR ALL TO anon, authenticated USING (false);
 
 -- customers
-DO $$
-BEGIN
-  IF to_regclass('public.customers') IS NOT NULL THEN
-    EXECUTE 'DROP POLICY IF EXISTS "deny_direct_access" ON public.customers';
-    EXECUTE 'CREATE POLICY "deny_direct_access" ON public.customers
-      AS RESTRICTIVE FOR ALL TO anon, authenticated USING (false)';
-  END IF;
-END $$;
+CREATE POLICY "deny_direct_access" ON public.customers
+    AS RESTRICTIVE FOR ALL TO anon, authenticated USING (false);
 
 -- reviews
-DO $$
-BEGIN
-  IF to_regclass('public.reviews') IS NOT NULL THEN
-    EXECUTE 'DROP POLICY IF EXISTS "deny_direct_access" ON public.reviews';
-    EXECUTE 'CREATE POLICY "deny_direct_access" ON public.reviews
-      AS RESTRICTIVE FOR ALL TO anon, authenticated USING (false)';
-  END IF;
-END $$;
+CREATE POLICY "deny_direct_access" ON public.reviews
+    AS RESTRICTIVE FOR ALL TO anon, authenticated USING (false);
 
 -- booking_attempts
-DROP POLICY IF EXISTS "deny_direct_access" ON public.booking_attempts;
 CREATE POLICY "deny_direct_access" ON public.booking_attempts
     AS RESTRICTIVE FOR ALL TO anon, authenticated USING (false);
 
 -- platform_settings (admin-only, never accessible to end users)
-DO $$
-BEGIN
-  IF to_regclass('public.platform_settings') IS NOT NULL THEN
-    EXECUTE 'DROP POLICY IF EXISTS "deny_direct_access" ON public.platform_settings';
-    EXECUTE 'CREATE POLICY "deny_direct_access" ON public.platform_settings
-      AS RESTRICTIVE FOR ALL TO anon, authenticated USING (false)';
-  END IF;
-END $$;
+CREATE POLICY "deny_direct_access" ON public.platform_settings
+    AS RESTRICTIVE FOR ALL TO anon, authenticated USING (false);
 
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -220,34 +166,19 @@ END $$;
 -- ─────────────────────────────────────────────────────────────────────────────
 
 ALTER TABLE IF EXISTS public.faq_documents ENABLE ROW LEVEL SECURITY;
-DO $$
-BEGIN
-  IF to_regclass('public.faq_documents') IS NOT NULL THEN
-    EXECUTE 'DROP POLICY IF EXISTS "deny_direct_access" ON public.faq_documents';
-    EXECUTE 'CREATE POLICY "deny_direct_access" ON public.faq_documents
-      AS RESTRICTIVE FOR ALL TO anon, authenticated USING (false)';
-  END IF;
-END $$;
+DROP POLICY IF EXISTS "deny_direct_access" ON public.faq_documents;
+CREATE POLICY "deny_direct_access" ON public.faq_documents
+    AS RESTRICTIVE FOR ALL TO anon, authenticated USING (false);
 
 ALTER TABLE IF EXISTS public.faq_embeddings ENABLE ROW LEVEL SECURITY;
-DO $$
-BEGIN
-  IF to_regclass('public.faq_embeddings') IS NOT NULL THEN
-    EXECUTE 'DROP POLICY IF EXISTS "deny_direct_access" ON public.faq_embeddings';
-    EXECUTE 'CREATE POLICY "deny_direct_access" ON public.faq_embeddings
-      AS RESTRICTIVE FOR ALL TO anon, authenticated USING (false)';
-  END IF;
-END $$;
+DROP POLICY IF EXISTS "deny_direct_access" ON public.faq_embeddings;
+CREATE POLICY "deny_direct_access" ON public.faq_embeddings
+    AS RESTRICTIVE FOR ALL TO anon, authenticated USING (false);
 
 ALTER TABLE IF EXISTS public.request_queue ENABLE ROW LEVEL SECURITY;
-DO $$
-BEGIN
-  IF to_regclass('public.request_queue') IS NOT NULL THEN
-    EXECUTE 'DROP POLICY IF EXISTS "deny_direct_access" ON public.request_queue';
-    EXECUTE 'CREATE POLICY "deny_direct_access" ON public.request_queue
-      AS RESTRICTIVE FOR ALL TO anon, authenticated USING (false)';
-  END IF;
-END $$;
+DROP POLICY IF EXISTS "deny_direct_access" ON public.request_queue;
+CREATE POLICY "deny_direct_access" ON public.request_queue
+    AS RESTRICTIVE FOR ALL TO anon, authenticated USING (false);
 
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -281,44 +212,24 @@ CREATE INDEX IF NOT EXISTS idx_conversations_created_at
 --     trigram index enables this to use an index scan instead of seqscan.
 --     Requires pg_trgm extension (enabled by default in Supabase).
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
-DO $$
-BEGIN
-  IF to_regclass('public.customers') IS NOT NULL THEN
-    EXECUTE 'CREATE INDEX IF NOT EXISTS idx_customers_name_trgm
-      ON public.customers USING GIN (name gin_trgm_ops)';
-  END IF;
-END $$;
+CREATE INDEX IF NOT EXISTS idx_customers_name_trgm
+    ON public.customers USING GIN (name gin_trgm_ops);
 
 -- 5f. customers.chat_id — looks up customer by chat ID across platforms;
 --     already has idx_customers_chat_id but it was on chat_id alone. A
 --     composite (business_id, chat_id) index covers the common filtered query.
-DO $$
-BEGIN
-  IF to_regclass('public.customers') IS NOT NULL THEN
-    EXECUTE 'CREATE INDEX IF NOT EXISTS idx_customers_business_chat_id
-      ON public.customers (business_id, chat_id)
-      WHERE chat_id IS NOT NULL';
-  END IF;
-END $$;
+CREATE INDEX IF NOT EXISTS idx_customers_business_chat_id
+    ON public.customers (business_id, chat_id)
+    WHERE chat_id IS NOT NULL;
 
 -- 5g. reviews.created_at — date-range queries in the reviews dashboard
-DO $$
-BEGIN
-  IF to_regclass('public.reviews') IS NOT NULL THEN
-    EXECUTE 'CREATE INDEX IF NOT EXISTS idx_reviews_business_created_at
-      ON public.reviews (business_id, created_at DESC)';
-  END IF;
-END $$;
+CREATE INDEX IF NOT EXISTS idx_reviews_business_created_at
+    ON public.reviews (business_id, created_at DESC);
 
 -- 5h. reviews.rating — average rating query; partial index for non-null ratings
-DO $$
-BEGIN
-  IF to_regclass('public.reviews') IS NOT NULL THEN
-    EXECUTE 'CREATE INDEX IF NOT EXISTS idx_reviews_rating
-      ON public.reviews (business_id, rating)
-      WHERE rating IS NOT NULL';
-  END IF;
-END $$;
+CREATE INDEX IF NOT EXISTS idx_reviews_rating
+    ON public.reviews (business_id, rating)
+    WHERE rating IS NOT NULL;
 
 -- 5i. cost_logs: weekly-report sums cost_logs by business + date range.
 --     idx_cost_logs_business_created already covers (business_id, created_at DESC)
@@ -326,13 +237,8 @@ END $$;
 
 -- 5j. faq_documents.business_id — the match_faqs_gemini and search_faqs_keyword
 --     functions filter by business_id; ensure a basic index exists.
-DO $$
-BEGIN
-  IF to_regclass('public.faq_documents') IS NOT NULL THEN
-    EXECUTE 'CREATE INDEX IF NOT EXISTS idx_faq_documents_business_id
-      ON public.faq_documents (business_id)';
-  END IF;
-END $$;
+CREATE INDEX IF NOT EXISTS idx_faq_documents_business_id
+    ON public.faq_documents (business_id);
 
 -- 5k. request_queue: the claim_queue_items function selects WHERE status IN
 --     ('pending','failed') ORDER BY created_at. The existing
