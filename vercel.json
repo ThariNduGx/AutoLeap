@@ -1,16 +1,8 @@
 {
   "crons": [
     {
-      "path": "/api/cron/process-queue",
-      "schedule": "*/2 * * * *"
-    },
-    {
       "path": "/api/cron/cleanup",
       "schedule": "0 2 * * *"
-    },
-    {
-      "path": "/api/cron/reminders",
-      "schedule": "*/30 * * * *"
     },
     {
       "path": "/api/cron/weekly-report",

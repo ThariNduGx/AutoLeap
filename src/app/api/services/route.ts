@@ -11,7 +11,7 @@ const VALID_CURRENCIES = ['LKR', 'USD', 'EUR', 'GBP', 'AED', 'SGD', 'INR', 'AUD'
 
 const TierSchema = z.object({
   name: z.string().min(1, 'Tier name is required').max(80),
-  price: z.number({ invalid_type_error: 'Tier price must be a number' }).min(0).max(1_000_000),
+  price: z.number({ error: 'Tier price must be a number' }).min(0).max(1_000_000),
   currency: z.string().optional(),
   duration_minutes: z.number().int().min(5).max(480).optional(),
 });
@@ -19,7 +19,7 @@ const TierSchema = z.object({
 const ServiceCreateSchema = z.object({
   name: z.string().min(1, 'Service name is required').max(100),
   description: z.string().max(300).optional(),
-  duration_minutes: z.coerce.number({ invalid_type_error: 'duration_minutes must be a number' }).int().min(5, 'duration_minutes must be at least 5').max(480, 'duration_minutes must be at most 480'),
+  duration_minutes: z.coerce.number({ error: 'duration_minutes must be a number' }).int().min(5, 'duration_minutes must be at least 5').max(480, 'duration_minutes must be at most 480'),
   buffer_minutes: z.coerce.number().int().min(0).max(120).optional().default(0),
   min_advance_hours: z.coerce.number().int().min(0).max(168).optional().default(0),
   price: z.number().min(0).max(1_000_000).nullable().optional(),

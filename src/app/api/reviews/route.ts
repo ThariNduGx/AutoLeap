@@ -15,7 +15,7 @@ const ReviewPostSchema = z.object({
   appointment_id: z.string().uuid('appointment_id must be a valid UUID').optional(),
   customer_chat_id: z.string().max(200).optional(),
   platform: z.enum(['telegram', 'messenger', 'whatsapp', 'web']).optional(),
-  rating: z.number({ invalid_type_error: 'rating must be a number' }).int().min(1, 'rating must be at least 1').max(5, 'rating must be at most 5'),
+  rating: z.number({ error: 'rating must be a number' }).int().min(1, 'rating must be at least 1').max(5, 'rating must be at most 5'),
   comment: z.string().max(2000, 'comment must be 2000 characters or fewer').optional(),
 }).refine(
   d => d.appointment_id || d.customer_chat_id,
