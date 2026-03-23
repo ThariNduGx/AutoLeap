@@ -9,8 +9,12 @@ export interface Database {
           business_id: string;
           customer_chat_id: string;
           intent: string;
+          status: 'ai' | 'human' | 'escalated';
           state: any;
           history: any[];
+          platform: string | null;
+          notes: string | null;
+          tags: string[];
           last_message_at: string;
           created_at: string;
           expires_at: string;
@@ -20,8 +24,12 @@ export interface Database {
           business_id: string;
           customer_chat_id: string;
           intent: string;
+          status?: 'ai' | 'human' | 'escalated';
           state?: any;
           history?: any[];
+          platform?: string | null;
+          notes?: string | null;
+          tags?: string[];
           last_message_at?: string;
           created_at?: string;
           expires_at?: string;
@@ -31,8 +39,12 @@ export interface Database {
           business_id?: string;
           customer_chat_id?: string;
           intent?: string;
+          status?: 'ai' | 'human' | 'escalated';
           state?: any;
           history?: any[];
+          platform?: string | null;
+          notes?: string | null;
+          tags?: string[];
           last_message_at?: string;
           created_at?: string;
           expires_at?: string;

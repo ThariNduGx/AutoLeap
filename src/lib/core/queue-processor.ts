@@ -6,6 +6,7 @@ import { estimateCost, requestBudget, calculateActualCost, commitCost, releaseBu
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { calendarToolsForGemini, executeCalendarTool } from './tools/calendar-tools';
 import type { InlineKeyboardButton } from '../infrastructure/telegram';
+import type { Database } from '../types/database.types';
 
 interface QueueItem {
   id: string;
@@ -31,17 +32,7 @@ interface ProcessingResult {
   messengerSlots?: { date: string; slots: string[] };
 }
 
-interface Conversation {
-  id: string;
-  business_id: string;
-  customer_chat_id: string;
-  intent: string;
-  state: any;
-  history: any[];
-  last_message_at: string;
-  created_at: string;
-  expires_at: string;
-}
+type Conversation = Database['public']['Tables']['conversations']['Row'];
 
 /**
  * Main queue processor - pulls pending items and routes them.
