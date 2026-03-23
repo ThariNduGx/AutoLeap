@@ -1,5 +1,25 @@
 # 🚀 Quick Start Guide
 
+## 📋 Table of Contents
+
+1. [Step 1: Database Migrations](#step-1-database-migrations)
+2. [Step 2: Environment Variables](#step-2-environment-variables)
+3. [Step 3: Start the Dev Server](#step-3-start-the-dev-server)
+4. [Step 4: Login as Admin](#step-4-login-as-admin)
+5. [Step 5: View Businesses](#step-5-view-businesses)
+6. [Step 6: Test Business User Flow](#step-6-test-business-user-flow)
+7. [Where is the Facebook Connect Button?](#where-is-the-facebook-connect-button)
+8. [Security Features](#security-features)
+9. [Testing Checklist](#testing-checklist)
+10. [Troubleshooting](#troubleshooting)
+    - ["Unauthorized" when accessing admin routes](#unauthorized-when-accessing-admin-routes)
+    - [Facebook button doesn't work](#facebook-button-doesnt-work)
+    - [Database errors](#database-errors)
+11. [Default Accounts](#default-accounts)
+12. [Next Steps](#next-steps)
+
+---
+
 ## Step 1: Database Migrations
 
 Run these two migrations in your Supabase dashboard (SQL Editor):

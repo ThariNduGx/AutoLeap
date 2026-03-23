@@ -1,5 +1,27 @@
 # 🎓 Complete Integration Guide for Business Owners
 
+## 📋 Table of Contents
+
+1. [Overview](#overview)
+2. [What Business Owners Can Do (Self-Service)](#what-business-owners-can-do-self-service)
+   - [Telegram Bot Integration](#1-telegram-bot-integration---fully-automated)
+   - [Facebook Messenger Integration](#2-facebook-messenger-integration---fully-automated)
+3. [Where Everything Happens](#where-everything-happens)
+4. [Technical Flow (Behind the Scenes)](#technical-flow-behind-the-scenes)
+   - [Telegram Connection Flow](#telegram-connection-flow)
+   - [Facebook Connection Flow](#facebook-connection-flow)
+5. [What Makes This "Easy" for Business Owners](#what-makes-this-easy-for-business-owners)
+6. [Files Created for Self-Service](#files-created-for-self-service)
+7. [Security Features](#security-features)
+8. [Current vs Ideal State](#current-vs-ideal-state)
+9. [Testing the Flow](#testing-the-flow)
+10. [What Business Owners Need to Know](#what-business-owners-need-to-know)
+11. [The Result](#the-result)
+12. [Environment Variables Needed](#environment-variables-needed)
+13. [Documentation for Business Owners](#documentation-for-business-owners)
+
+---
+
 ## Overview
 
 Your AutoLeap platform now has **COMPLETE SELF-SERVICE** integration for both Telegram and Facebook Messenger. Business owners can connect their bots/pages without any technical knowledge!

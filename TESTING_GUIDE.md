@@ -1,5 +1,22 @@
 # 🧪 Complete Testing Guide - Test Your Product
 
+## 📋 Table of Contents
+
+1. [Prerequisites](#prerequisites)
+2. [Step 1: Create a Test Business User](#step-1-create-a-test-business-user)
+3. [Step 2: Login as Business User](#step-2-login-as-business-user)
+4. [Step 3: Test Telegram Integration](#step-3-test-telegram-integration)
+5. [Step 4: Test Facebook Messenger Integration](#step-4-test-facebook-messenger-integration)
+6. [Step 5: Add Test FAQs](#step-5-add-test-faqs)
+7. [Step 6: Test End-to-End Flow](#step-6-test-end-to-end-flow)
+8. [Step 7: Test as Admin](#step-7-test-as-admin)
+9. [Troubleshooting](#troubleshooting)
+10. [Quick Test Checklist](#quick-test-checklist)
+11. [Environment Variables Summary](#environment-variables-summary)
+12. [Testing Video Flow](#testing-video-flow)
+
+---
+
 ## Prerequisites
 
 Before you start testing, make sure:
