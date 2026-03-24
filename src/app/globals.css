@@ -57,3 +57,9 @@ body {
   color: var(--foreground);
   font-family: var(--font-sans);
 }
+
+/* Hide the native browser clock/calendar icon on time inputs */
+input[type="time"]::-webkit-calendar-picker-indicator {
+  display: none;
+  appearance: none;
+}

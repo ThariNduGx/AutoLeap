@@ -536,14 +536,14 @@ export default function SettingsPage() {
                                                     type="time"
                                                     value={businessHours[day]?.open || '08:00'}
                                                     onChange={e => updateDayHours(day, 'open', e.target.value)}
-                                                    className="px-2 py-1 border border-gray-300 rounded text-sm outline-none focus:ring-1 focus:ring-indigo-500"
+                                                    className="px-2 py-1 border border-gray-300 rounded text-sm outline-none focus:ring-1 focus:ring-indigo-500 [&::-webkit-calendar-picker-indicator]:hidden [&::-webkit-inner-spin-button]:hidden"
                                                 />
                                                 <span className="text-gray-400 text-sm">to</span>
                                                 <input
                                                     type="time"
                                                     value={businessHours[day]?.close || '18:00'}
                                                     onChange={e => updateDayHours(day, 'close', e.target.value)}
-                                                    className="px-2 py-1 border border-gray-300 rounded text-sm outline-none focus:ring-1 focus:ring-indigo-500"
+                                                    className="px-2 py-1 border border-gray-300 rounded text-sm outline-none focus:ring-1 focus:ring-indigo-500 [&::-webkit-calendar-picker-indicator]:hidden [&::-webkit-inner-spin-button]:hidden"
                                                 />
                                             </div>
                                         ) : (

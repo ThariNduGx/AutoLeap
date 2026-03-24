@@ -22,8 +22,9 @@ export async function GET(req: NextRequest) {
         return NextResponse.redirect(url);
     }
 
-    const appId = process.env.NEXT_PUBLIC_FACEBOOK_APP_ID!;
-    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL!;
+    const appId = (process.env.NEXT_PUBLIC_FACEBOOK_APP_ID || '').trim();
+    const baseUrl = (process.env.NEXT_PUBLIC_BASE_URL || '').trim();
+    const configId = (process.env.FB_LOGIN_CONFIG_ID || '').trim();
     const redirectUri = `${baseUrl}/api/auth/facebook/callback`;
 
     // Encode businessId + timestamp in state for CSRF protection
@@ -33,10 +34,19 @@ export async function GET(req: NextRequest) {
     const fbAuthUrl = new URL('https://www.facebook.com/v24.0/dialog/oauth');
     fbAuthUrl.searchParams.set('client_id', appId);
     fbAuthUrl.searchParams.set('redirect_uri', redirectUri);
-    fbAuthUrl.searchParams.set('scope', 'pages_show_list,pages_messaging,pages_manage_metadata,business_management');
     fbAuthUrl.searchParams.set('response_type', 'code');
     fbAuthUrl.searchParams.set('state', state);
 
-    console.log('[FB AUTH] Redirecting to Facebook OAuth for business:', businessId);
+    // Facebook Login for Business uses config_id (set in Meta Developer Console)
+    // instead of raw scope. Without config_id, Facebook may show "Feature unavailable".
+    if (configId) {
+        fbAuthUrl.searchParams.set('config_id', configId);
+        console.log('[FB AUTH] Using Facebook Login for Business config_id:', configId);
+    } else {
+        fbAuthUrl.searchParams.set('scope', 'pages_show_list,pages_messaging,pages_manage_metadata,business_management');
+        console.warn('[FB AUTH] No FB_LOGIN_CONFIG_ID set — using raw scope fallback');
+    }
+
+    console.log('[FB AUTH] Redirecting to Facebook OAuth for business:', businessId, '→', redirectUri);
     return NextResponse.redirect(fbAuthUrl.toString());
 }

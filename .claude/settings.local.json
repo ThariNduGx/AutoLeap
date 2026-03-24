@@ -12,7 +12,8 @@
       "Bash(npm install:*)",
       "Bash(powershell -Command \"Resolve-DnsName glzlorvhnfpiebnfwvdl.supabase.co 2>&1 | Select-Object -First 3\")",
       "Bash(find:*)",
-      "Bash(node -e \":*)"
+      "Bash(node -e \":*)",
+      "Bash(grep -rl \"business.hours\\\\|BusinessHours\\\\|business_hours\\\\|input.*type.*time\" 'D:/New Files/Personal/Web Projects/AutoLeap/src' --include=*.tsx -l)"
     ]
   }
 }
