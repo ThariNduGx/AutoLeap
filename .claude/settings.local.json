@@ -15,7 +15,8 @@
       "Bash(node -e \":*)",
       "Bash(grep -rl \"business.hours\\\\|BusinessHours\\\\|business_hours\\\\|input.*type.*time\" 'D:/New Files/Personal/Web Projects/AutoLeap/src' --include=*.tsx -l)",
       "Bash(grep -n \"telegram_webhook_secret\\\\|owner_telegram_chat_id\" \"D:/New Files/Personal/Web Projects/AutoLeap/supabase/migrations/\"*.sql)",
-      "Bash(grep -l \"idempotency_key\\\\|notes\\\\|tags\\\\|owner_telegram_chat_id\" \"D:/New Files/Personal/Web Projects/AutoLeap/supabase/migrations/\"*.sql)"
+      "Bash(grep -l \"idempotency_key\\\\|notes\\\\|tags\\\\|owner_telegram_chat_id\" \"D:/New Files/Personal/Web Projects/AutoLeap/supabase/migrations/\"*.sql)",
+      "Bash(grep -l \"notes\\\\|tags\" \"D:/New Files/Personal/Web Projects/AutoLeap/supabase/migrations/\"*.sql)"
     ]
   }
 }
