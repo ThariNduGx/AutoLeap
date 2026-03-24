@@ -91,7 +91,7 @@ export async function POST(request: NextRequest) {
         if (businessError || !business) {
             console.error('[SIGNUP] Business creation error:', businessError);
             return NextResponse.json(
-                { error: 'Failed to create business account' },
+                { error: `Failed to create business account: ${businessError?.message ?? 'unknown error'}` },
                 { status: 500 }
             );
         }
@@ -119,7 +119,7 @@ export async function POST(request: NextRequest) {
                 .eq('id', business.id);
 
             return NextResponse.json(
-                { error: 'Failed to create user account' },
+                { error: `Failed to create user account: ${userError?.message ?? 'unknown error'}` },
                 { status: 500 }
             );
         }
@@ -166,9 +166,9 @@ export async function POST(request: NextRequest) {
         });
 
     } catch (error: any) {
-        console.error('[SIGNUP] Exception:', error);
+        console.error('[SIGNUP] Unhandled exception:', error?.message, error?.stack);
         return NextResponse.json(
-            { error: 'An error occurred during signup' },
+            { error: `An error occurred during signup: ${error?.message ?? 'unknown error'}` },
             { status: 500 }
         );
     }

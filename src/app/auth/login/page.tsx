@@ -46,7 +46,14 @@ export default function LoginPage() {
         body: JSON.stringify({ email, password }),
       });
 
-      const data = await response.json();
+      let data: any;
+      try {
+        data = await response.json();
+      } catch {
+        setError(`Login failed (HTTP ${response.status}). Check browser console for details.`);
+        console.error('[LOGIN] Non-JSON response from server, status:', response.status);
+        return;
+      }
 
       if (!response.ok) {
         setError(data.error || "Login failed");
@@ -56,7 +63,8 @@ export default function LoginPage() {
       // Success — navigate away; keep loading state active during transition
       router.push("/dashboard");
     } catch (err) {
-      setError("An unexpected error occurred");
+      console.error('[LOGIN] Unexpected error:', err);
+      setError("An unexpected error occurred. Check browser console for details.");
     } finally {
       // Only reset loading if we are NOT navigating away (error path).
       // On success the component unmounts quickly, but resetting here is safe

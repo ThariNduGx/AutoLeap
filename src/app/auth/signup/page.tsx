@@ -47,7 +47,14 @@ export default function SignupPage() {
                 body: JSON.stringify(payload),
             });
 
-            const data = await response.json();
+            let data: any;
+            try {
+                data = await response.json();
+            } catch {
+                setError(`Signup failed (HTTP ${response.status}). Check browser console for details.`);
+                console.error('[SIGNUP] Non-JSON response from server, status:', response.status);
+                return;
+            }
 
             if (!response.ok) {
                 setError(data.error || 'Signup failed');
@@ -57,7 +64,8 @@ export default function SignupPage() {
             // Success — navigate away
             router.push('/auth/login?success=true');
         } catch (err) {
-            setError('An unexpected error occurred');
+            console.error('[SIGNUP] Unexpected error:', err);
+            setError('An unexpected error occurred. Check browser console for details.');
         } finally {
             setIsLoading(false);
         }
