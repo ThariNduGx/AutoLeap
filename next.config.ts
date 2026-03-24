@@ -1,7 +1,5 @@
 import type { NextConfig } from "next";
 
-const isProd = process.env.NODE_ENV === 'production';
-
 const securityHeaders = [
   // Prevent clickjacking — page cannot be framed by third parties
   { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
@@ -20,15 +18,13 @@ const securityHeaders = [
     value: 'max-age=63072000; includeSubDomains; preload',
   },
   // Content Security Policy
-  // In production: unsafe-eval is required by the Next.js React runtime; unsafe-inline removed from scripts.
-  // In development: unsafe-inline is also enabled for fast refresh / HMR.
+  // Both unsafe-eval and unsafe-inline are required by the Next.js React runtime
+  // (hydration scripts, fast refresh HMR, and inline script chunks).
   {
     key: 'Content-Security-Policy',
     value: [
       "default-src 'self'",
-      isProd
-        ? "script-src 'self' 'unsafe-eval'"
-        : "script-src 'self' 'unsafe-eval' 'unsafe-inline'",
+      "script-src 'self' 'unsafe-eval' 'unsafe-inline'",
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "font-src 'self' https://fonts.gstatic.com",
       "img-src 'self' data: https:",
