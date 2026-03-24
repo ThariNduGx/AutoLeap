@@ -101,6 +101,21 @@ export async function sendTypingAction(
 }
 
 /**
+ * Returns the shared platform-level webhook secret used to authenticate
+ * incoming Telegram updates. Using a single shared secret (instead of one per
+ * business stored in the DB) removes the DB round-trip on every webhook hit
+ * and eliminates the failure mode where the stored secret is stale.
+ */
+export function getWebhookSecret(): string {
+  const secret = process.env.TELEGRAM_WEBHOOK_SECRET || process.env.CRON_SECRET;
+  if (!secret) {
+    console.warn('[TELEGRAM] Neither TELEGRAM_WEBHOOK_SECRET nor CRON_SECRET is set — webhook auth will fail');
+    return '';
+  }
+  return secret;
+}
+
+/**
  * Get bot information (for verification)
  */
 export async function getBotInfo(botToken: string): Promise<any> {

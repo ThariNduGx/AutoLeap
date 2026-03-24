@@ -1,10 +1,11 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, after } from 'next/server';
 import { getSupabaseClient } from '@/lib/infrastructure/supabase';
 import { verifyWebhookSignature } from '@/lib/infrastructure/messenger';
 import { rateLimitByKey } from '@/lib/infrastructure/rate-limit';
+import { processQueue } from '@/lib/core/queue-processor';
 
-// Force edge runtime for instant startup and low cost
-export const runtime = 'edge';
+// Node.js runtime required — processQueue uses setInterval and dynamic imports
+export const dynamic = 'force-dynamic';
 
 // Messenger payloads are small (a few KB). Enforce a hard cap.
 const MAX_BODY_BYTES = 16_384; // 16 KB
@@ -339,29 +340,19 @@ async function processIncomingMessage(message: {
         if (queueError) {
             if ((queueError as any).code === '23505') {
                 console.log('[MESSENGER WEBHOOK] Duplicate message ignored:', message.messageId);
-                triggerQueue();
+                after(processQueue(5).catch(err => console.error('[MESSENGER WEBHOOK] Queue error:', err)));
                 return;
             }
             console.error('[MESSENGER WEBHOOK] Queue insert error:', queueError);
             return;
         }
 
-        triggerQueue();
+        after(processQueue(5).catch(err => console.error('[MESSENGER WEBHOOK] Queue error:', err)));
     } catch (error) {
         console.error('[MESSENGER WEBHOOK] Message processing error:', error);
     }
 }
 
-// Trigger the queue processor via Authorization header — NOT a query param —
-// so the CRON_SECRET never appears in server logs or CDN access logs.
-function triggerQueue() {
-    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL;
-    const cronSecret = process.env.CRON_SECRET;
-    if (!baseUrl || !cronSecret) return;
-    fetch(`${baseUrl}/api/cron/process-queue`, {
-        headers: { 'Authorization': `Bearer ${cronSecret}` },
-    }).catch(() => {});
-}
 
 /** Notify first un-notified waitlist entry for the same service after a cancellation (Messenger). */
 async function notifyWaitlistAfterCancelMessenger(

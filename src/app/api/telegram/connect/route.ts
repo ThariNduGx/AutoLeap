@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { getSession, hasRole } from '@/lib/auth/session';
 import { getSupabaseClient } from '@/lib/infrastructure/supabase';
+import { getWebhookSecret } from '@/lib/infrastructure/telegram';
 
 /**
  * POST /api/telegram/connect
@@ -73,10 +74,13 @@ export async function POST(request: NextRequest) {
                 { status: 500 }
             );
         }
-        const webhookUrl = `${baseUrl}/api/webhooks/telegram`;
+        // Include businessId in the webhook URL so the handler can identify
+        // which business owns the bot without a DB lookup on every message.
+        const webhookUrl = `${baseUrl}/api/webhooks/telegram?businessId=${businessId}`;
 
-        // Generate a unique, random secret for this business's bot
-        const webhookSecret = crypto.randomUUID().replace(/-/g, '');
+        // Use the shared platform secret (same for all businesses) so there is
+        // no per-business secret to go stale in the database.
+        const webhookSecret = getWebhookSecret();
 
         const webhookRes = await fetch(
             `https://api.telegram.org/bot${bot_token}/setWebhook`,
@@ -109,7 +113,6 @@ export async function POST(request: NextRequest) {
             .from('businesses') as any)
             .update({
                 telegram_bot_token: bot_token,
-                telegram_webhook_secret: webhookSecret,
             })
             .eq('id', businessId);
 
