@@ -652,10 +652,23 @@ async function handleGreeting(
   // Tone-aware help text (unused in the static response but keeps the variable used)
   void toneNote;
 
+  const responseText = `${openLine}\n\n_You are chatting with ${botName} — an AI assistant. A human is available if needed._\n\nHow can I help you today?\n\n• Book an appointment\n• Answer questions about our services\n• Check your booking status`;
+
+  // Persist conversation so it appears in the dashboard
+  try {
+    const conv = await getOrCreateConversation(businessId, message.chatId, 'greeting');
+    await updateConversation(conv.id, {}, [
+      ...((conv as any).history || []),
+      { role: 'user',      content: message.text,  ts: new Date().toISOString() },
+      { role: 'assistant', content: responseText,   ts: new Date().toISOString() },
+    ]);
+  } catch (e) {
+    console.warn('[GREETING] Could not persist conversation:', e);
+  }
+
   return {
     success: true,
-    // §8.3 ethics requirement: disclose AI on first message
-    response: `${openLine}\n\n_You are chatting with ${botName} — an AI assistant. A human is available if needed._\n\nHow can I help you today?\n\n• Book an appointment\n• Answer questions about our services\n• Check your booking status`,
+    response: responseText,
     costIncurred: 0,
   };
 }
@@ -772,6 +785,18 @@ CRITICAL RULES — follow exactly:
     const cost = calculateActualCost(model as any, tokensIn, tokensOut);
 
     await commitCost(businessId, cost, model as any, tokensIn, tokensOut);
+
+    // Persist conversation so it appears in the dashboard
+    try {
+      const conv = await getOrCreateConversation(businessId, message.chatId, 'faq');
+      await updateConversation(conv.id, {}, [
+        ...((conv as any).history || []),
+        { role: 'user',      content: message.text, ts: new Date().toISOString() },
+        { role: 'assistant', content: answer,        ts: new Date().toISOString() },
+      ]);
+    } catch (e) {
+      console.warn('[FAQ] Could not persist conversation:', e);
+    }
 
     return {
       success: true,

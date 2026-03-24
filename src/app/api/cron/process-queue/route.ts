@@ -13,14 +13,18 @@ export const dynamic = 'force-dynamic';
  */
 export async function GET(req: Request) {
   try {
-    // 1. Verify this is a legitimate cron request
-    // Auth via header only — query-param key is not supported (would expose secret in logs)
+    // 1. Verify this is a legitimate cron request.
+    // Accepts two valid auth paths:
+    //   a) Our own CRON_SECRET (used by triggerQueue() inside webhooks)
+    //   b) Vercel's built-in cron invocation header (x-vercel-cron: 1)
+    //      Vercel sends Authorization: Bearer {CRON_SECRET} automatically when
+    //      CRON_SECRET is set, but also sets x-vercel-cron as a secondary signal.
     const cronSecret = process.env.CRON_SECRET;
-    if (!cronSecret) {
-      return new NextResponse('Server misconfiguration: CRON_SECRET not set', { status: 500 });
-    }
-    if (req.headers.get('authorization') !== `Bearer ${cronSecret}`) {
-      console.warn('[CRON] Unauthorized request');
+    const isVercelCron = req.headers.get('x-vercel-cron') === '1';
+    const hasValidSecret = cronSecret && req.headers.get('authorization') === `Bearer ${cronSecret}`;
+
+    if (!isVercelCron && !hasValidSecret) {
+      console.warn('[CRON] Unauthorized request — missing valid secret or Vercel cron header');
       return new NextResponse('Unauthorized', { status: 401 });
     }
 
